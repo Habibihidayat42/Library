@@ -47,6 +47,12 @@ Library._connections = {}
 Library._searchIndex = {}
 Library._saveThread = nil
 Library._initialized = false
+
+local function warnLog(context, err)
+    if warn then
+        warn("[LynxGUI][" .. tostring(context) .. "] " .. tostring(err))
+    end
+end
 local CONFIG_FOLDER    = "LynxGUI_Configs"
 local CONFIG_FILE      = CONFIG_FOLDER .. "/lynx_config.json"
 local CurrentConfig    = {}
@@ -224,19 +230,22 @@ local function new(class, props)
 end
 function Library:AddConnection(name, connection)
     if self._connections[name] then
-        pcall(function() self._connections[name]:Disconnect() end)
+        local ok, err = pcall(function() self._connections[name]:Disconnect() end)
+        if not ok then warnLog("AddConnection:Disconnect", err) end
     end
     self._connections[name] = connection
     return connection
 end
 function Library:Cleanup()
     if isDirty then
-        safecall(function() Library.ConfigSystem.Save() end)
+        local ok, err = pcall(function() Library.ConfigSystem.Save() end)
+        if not ok then warnLog("Cleanup:Save", err) end
         isDirty = false
     end
     if self._connections then
-        for _, conn in pairs(self._connections) do
-            pcall(function() conn:Disconnect() end)
+        for name, conn in pairs(self._connections) do
+            local ok, err = pcall(function() conn:Disconnect() end)
+            if not ok then warnLog("Cleanup:Disconnect:" .. tostring(name), err) end
         end
         table.clear(self._connections)
     end
@@ -297,18 +306,21 @@ function Library.ConfigSystem.SetDefaults(defaults)
     DefaultConfig = DeepCopy(defaults)
 end
 function Library.ConfigSystem.Save()
-    local ok, err = safecall(function()
+    local ok, err = pcall(function()
         EnsureFolderExists()
         local encoded = HttpService:JSONEncode(CurrentConfig)
         writefile(CONFIG_FILE, encoded)
     end)
-    return ok
+    if not ok then
+        warnLog("ConfigSystem.Save", err)
+    end
+    return ok, err
 end
 function Library.ConfigSystem.Load()
     EnsureFolderExists()
     CurrentConfig = DeepCopy(DefaultConfig)
     if isfile(CONFIG_FILE) then
-        local ok, err = safecall(function()
+        local ok, err = pcall(function()
             local raw = readfile(CONFIG_FILE)
             if not raw or raw == "" then return end
             local loaded = HttpService:JSONDecode(raw)
@@ -318,8 +330,9 @@ function Library.ConfigSystem.Load()
             end
         end)
         if not ok then
-            warn("[LynxGUI] Corrupt config file deleted: " .. tostring(err))
-            safecall(function() delfile(CONFIG_FILE) end)
+            warnLog("ConfigSystem.Load", "Corrupt config, resetting to defaults: " .. tostring(err))
+            local delOk, delErr = pcall(function() delfile(CONFIG_FILE) end)
+            if not delOk then warnLog("ConfigSystem.Load:Delete", delErr) end
             CurrentConfig = DeepCopy(DefaultConfig)
         end
     end
@@ -366,8 +379,13 @@ local function MarkDirty()
             Library._saveThread = nil
             return
         end
-        safecall(function() Library.ConfigSystem.Save() end)
-        isDirty = false
+        local ok, err = pcall(function() Library.ConfigSystem.Save() end)
+        if not ok then
+            warnLog("MarkDirty:AutoSave", err)
+        end
+        if ok then
+            isDirty = false
+        end
         Library._saveThread = nil
     end)
 end
@@ -386,10 +404,11 @@ local function ExecuteConfigCallbacks()
     -- Phase 1: restore every component's saved value + visual state WITHOUT
     -- running any action callbacks. This guarantees that dropdown/input filter
     -- values are already in place before any toggle action runs.
-    for _, entry in pairs(CallbackRegistry) do
+    for path, entry in pairs(CallbackRegistry) do
         if entry.updateVisual then
             local value = Library.ConfigSystem.Get(entry.path, entry.default)
-            safecall(entry.updateVisual, value)
+            local ok, err = pcall(entry.updateVisual, value)
+            if not ok then warnLog("ExecuteConfigCallbacks:Visual:" .. tostring(path), err) end
         end
     end
     -- Phase 2: run action callbacks. Non-toggle components (dropdown, input,
@@ -398,11 +417,12 @@ local function ExecuteConfigCallbacks()
     -- after its dropdown filter has been restored, fixing the load-order bug
     -- where the toggle ran unfiltered on execute.
     local function runCallbacks(wantToggle)
-        for _, entry in pairs(CallbackRegistry) do
+        for path, entry in pairs(CallbackRegistry) do
             local isToggle = entry.type == "toggle"
             if entry.callback and isToggle == wantToggle then
                 local value = Library.ConfigSystem.Get(entry.path, entry.default)
-                safecall(entry.callback, value)
+                local ok, err = pcall(entry.callback, value)
+                if not ok then warnLog("ExecuteConfigCallbacks:Callback:" .. tostring(path), err) end
             end
         end
     end
@@ -1081,7 +1101,10 @@ function Library:_createSearchBar()
         if entry.pageName then
             self:_switchPage(entry.pageName)
         end
-        if entry.expand then pcall(entry.expand) end
+        if entry.expand then
+            local ok, err = pcall(entry.expand)
+            if not ok then warnLog("goToFeature:expand", err) end
+        end
         task.defer(function()
             local frame = entry.frame
             if not frame or not frame.Parent then return end
@@ -2112,7 +2135,8 @@ function Library:CreateButton(parent, label, callback)
         -- Jalankan callback di thread terpisah agar tidak membekukan UI
         if callback then
             task.spawn(function()
-                safecall(callback)
+                local ok, err = pcall(callback)
+                if not ok then warnLog("CreateButton:Callback:" .. tostring(label), err) end
             end)
         end
         
@@ -2130,9 +2154,10 @@ function Library:Initialize()
     self._initialized = true
     ExecuteConfigCallbacks()
     if self._pendingWindowObj then
-        safecall(function()
+        local ok, err = pcall(function()
             self:_createConfigTab(self._pendingWindowObj)
         end)
+        if not ok then warnLog("Initialize:CreateConfigTab", err) end
         self._pendingWindowObj = nil
     end
     self:AddConnection("playerRemoving", Players.PlayerRemoving:Connect(function(plr)
@@ -2141,8 +2166,9 @@ function Library:Initialize()
                 pcall(function() task.cancel(Library._saveThread) end)
                 Library._saveThread = nil
             end
+            local ok, err = pcall(function() Library.ConfigSystem.Save() end)
+            if not ok then warnLog("playerRemoving:Save", err) end
             isDirty = false
-            safecall(function() Library.ConfigSystem.Save() end)
         end
     end))
 end
@@ -2259,12 +2285,12 @@ function Library:_createConfigTab(WindowObject)
     mgmtSection:AddButton({
         Title    = "Save Config Now",
         Callback = function()
-            local ok = Library.ConfigSystem.Save()
+            local ok, err = Library.ConfigSystem.Save()
             self:MakeNotify({
                 Title       = "Config",
-                Description = ok and "Config berhasil disimpan!" or "Gagal menyimpan config.",
+                Description = ok and "Config berhasil disimpan!" or ("Gagal menyimpan config: " .. tostring(err)),
                 Color       = ok and colors.success or Color3.fromRGB(220, 50, 50),
-                Delay       = 2,
+                Delay       = ok and 2 or 4,
             })
         end,
     })
