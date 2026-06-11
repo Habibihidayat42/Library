@@ -1,5 +1,38 @@
 --w
 local Library = {}
+local MAX_INPUT_LENGTH = 1000
+local function safecall(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok and err then
+        warn("[LynxGUI] Error: " .. tostring(err))
+    end
+    return ok, err
+end
+local function stripRichTags(text)
+    if type(text) ~= "string" then return tostring(text or "") end
+    return (text:gsub("<[^>]+>", ""))
+end
+local function sanitizeInput(text, maxLen)
+    if type(text) ~= "string" then text = tostring(text or "") end
+    maxLen = maxLen or MAX_INPUT_LENGTH
+    if #text > maxLen then text = text:sub(1, maxLen) end
+    return text
+end
+local function ValidateConfigTypes(loaded, schema)
+    if type(loaded) ~= "table" or type(schema) ~= "table" then return loaded end
+    local validated = {}
+    for k, schemaVal in pairs(schema) do
+        local loadedVal = loaded[k]
+        if loadedVal ~= nil then
+            if type(schemaVal) == "table" and type(loadedVal) == "table" then
+                validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
+            elseif type(loadedVal) == type(schemaVal) then
+                validated[k] = loadedVal
+            end
+        end
+    end
+    return validated
+end
 Library.flags = {}
 Library.pages = {}
 Library._navButtons = {}
@@ -104,7 +137,7 @@ function Library:AddConnection(name, connection)
 end
 function Library:Cleanup()
     if isDirty then
-        pcall(function() Library.ConfigSystem.Save() end)
+        safecall(function() Library.ConfigSystem.Save() end)
         isDirty = false
     end
     if self._connections then
@@ -170,7 +203,7 @@ function Library.ConfigSystem.SetDefaults(defaults)
     DefaultConfig = DeepCopy(defaults)
 end
 function Library.ConfigSystem.Save()
-    local ok, err = pcall(function()
+    local ok, err = safecall(function()
         EnsureFolderExists()
         local encoded = HttpService:JSONEncode(CurrentConfig)
         writefile(CONFIG_FILE, encoded)
@@ -181,16 +214,18 @@ function Library.ConfigSystem.Load()
     EnsureFolderExists()
     CurrentConfig = DeepCopy(DefaultConfig)
     if isfile(CONFIG_FILE) then
-        local ok, err = pcall(function()
+        local ok, err = safecall(function()
             local raw = readfile(CONFIG_FILE)
             if not raw or raw == "" then return end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
-                MergeTables(CurrentConfig, loaded)
+                local validated = ValidateConfigTypes(loaded, DefaultConfig)
+                MergeTables(CurrentConfig, validated)
             end
         end)
         if not ok then
-            pcall(function() delfile(CONFIG_FILE) end)
+            warn("[LynxGUI] Corrupt config file deleted: " .. tostring(err))
+            safecall(function() delfile(CONFIG_FILE) end)
             CurrentConfig = DeepCopy(DefaultConfig)
         end
     end
@@ -226,7 +261,7 @@ function Library.ConfigSystem.Delete()
     end
 end
 local function MarkDirty()
-    if _G.AutoSaveEnabled == false then return end
+    if not _autoSaveEnabled then return end
     isDirty = true
     if Library._saveThread then
         pcall(function() task.cancel(Library._saveThread) end)
@@ -237,7 +272,7 @@ local function MarkDirty()
             Library._saveThread = nil
             return
         end
-        local ok = pcall(function() Library.ConfigSystem.Save() end)
+        safecall(function() Library.ConfigSystem.Save() end)
         isDirty = false
         Library._saveThread = nil
     end)
@@ -260,7 +295,7 @@ local function ExecuteConfigCallbacks()
     for _, entry in pairs(CallbackRegistry) do
         if entry.updateVisual then
             local value = Library.ConfigSystem.Get(entry.path, entry.default)
-            pcall(entry.updateVisual, value)
+            safecall(entry.updateVisual, value)
         end
     end
     -- Phase 2: run action callbacks. Non-toggle components (dropdown, input,
@@ -273,25 +308,31 @@ local function ExecuteConfigCallbacks()
             local isToggle = entry.type == "toggle"
             if entry.callback and isToggle == wantToggle then
                 local value = Library.ConfigSystem.Get(entry.path, entry.default)
-                pcall(entry.callback, value)
+                safecall(entry.callback, value)
             end
         end
     end
     runCallbacks(false)
     runCallbacks(true)
 end
-_G.AutoSaveEnabled = true
-function _G.GetConfigValue(key, default)
+local _autoSaveEnabled = true
+_G.LynxGUI = _G.LynxGUI or {}
+_G.LynxGUI.AutoSaveEnabled = true
+function _G.LynxGUI.GetConfigValue(key, default)
     return Library.ConfigSystem.Get(key, default)
 end
-function _G.SaveConfigValue(key, value)
+function _G.LynxGUI.SaveConfigValue(key, value)
     Library.ConfigSystem.Set(key, value)
-    if _G.AutoSaveEnabled then
+    if _autoSaveEnabled then
         MarkDirty()
     end
 end
-function _G.GetFullConfig()
-    return CurrentConfig
+function _G.LynxGUI.GetFullConfig()
+    local copy = {}
+    for k, v in pairs(CurrentConfig) do
+        copy[k] = v
+    end
+    return copy
 end
 function Library:CreateWindow(config)
     config = config or {}
@@ -1945,22 +1986,28 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         ZIndex = 9
     })
     local function resolveValue(text)
+        text = sanitizeInput(text, MAX_INPUT_LENGTH)
         -- Don't convert long numbers (like Discord IDs) to number type
         -- Lua numbers lose precision for IDs longer than 15 digits
         if type(text) == "string" and #text > 15 and text:match("^%d+$") then
             return text  -- Keep as string for long numeric IDs
         end
         local num = tonumber(text)
+        if num then
+            if num ~= num then return 0 end  -- NaN guard
+            if num == math.huge or num == -math.huge then return 0 end
+        end
         return num or text
     end
     self:AddConnection("input_" .. label .. tostring(inputBox), inputBox.FocusLost:Connect(function()
-        local rawValue = inputBox.Text
+        local rawValue = sanitizeInput(inputBox.Text, MAX_INPUT_LENGTH)
+        inputBox.Text = rawValue
         local value = resolveValue(rawValue)
         if configPath then
             Library.ConfigSystem.Set(configPath, value)
             MarkDirty()
         end
-        if callback then callback(value) end
+        if callback then safecall(callback, value) end
     end))
     RegisterCallback(configPath, callback, "input", defaultValue, function(val)
         inputBox.Text = tostring(val ~= nil and val or defaultValue or "")
@@ -2019,7 +2066,7 @@ function Library:CreateButton(parent, label, callback)
         -- Jalankan callback di thread terpisah agar tidak membekukan UI
         if callback then
             task.spawn(function()
-                pcall(callback)
+                safecall(callback)
             end)
         end
         
@@ -2037,7 +2084,7 @@ function Library:Initialize()
     self._initialized = true
     ExecuteConfigCallbacks()
     if self._pendingWindowObj then
-        pcall(function()
+        safecall(function()
             self:_createConfigTab(self._pendingWindowObj)
         end)
         self._pendingWindowObj = nil
@@ -2049,7 +2096,7 @@ function Library:Initialize()
                 Library._saveThread = nil
             end
             isDirty = false
-            pcall(function() Library.ConfigSystem.Save() end)
+            safecall(function() Library.ConfigSystem.Save() end)
         end
     end))
 end
@@ -2152,7 +2199,8 @@ function Library:_createConfigTab(WindowObject)
         Default  = true,
         NoSave   = true,
         Callback = function(val)
-            _G.AutoSaveEnabled = val
+            _autoSaveEnabled = val
+            _G.LynxGUI.AutoSaveEnabled = val
             self:MakeNotify({
                 Title       = "Auto Save",
                 Description = val and "Auto Save diaktifkan" or "Auto Save dinonaktifkan",
@@ -2454,9 +2502,9 @@ function Library:Window(config)
             end
             function SectionObject:AddParagraph(paragraphConfig)
                 paragraphConfig = paragraphConfig or {}
-                local title   = formatRichText(paragraphConfig.Title or "")
-                local content = formatRichText(paragraphConfig.Content or "")
-                local useRich = paragraphConfig.RichText ~= false
+                local useRich = paragraphConfig.RichText == true
+                local title   = useRich and formatRichText(paragraphConfig.Title or "") or stripRichTags(paragraphConfig.Title or "")
+                local content = useRich and formatRichText(paragraphConfig.Content or "") or stripRichTags(paragraphConfig.Content or "")
 
                 local PADDING_V = 20
                 local GAP       = 6
