@@ -20,14 +20,14 @@ end
 local function ValidateConfigTypes(loaded, schema)
     if type(loaded) ~= "table" or type(schema) ~= "table" then return loaded end
     local validated = {}
-    for k, schemaVal in pairs(schema) do
-        local loadedVal = loaded[k]
-        if loadedVal ~= nil then
-            if type(schemaVal) == "table" and type(loadedVal) == "table" then
-                validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
-            elseif type(loadedVal) == type(schemaVal) then
-                validated[k] = loadedVal
-            end
+    for k, loadedVal in pairs(loaded) do
+        local schemaVal = schema[k]
+        if schemaVal == nil then
+            validated[k] = loadedVal
+        elseif type(schemaVal) == "table" and type(loadedVal) == "table" then
+            validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
+        elseif type(loadedVal) == type(schemaVal) then
+            validated[k] = loadedVal
         end
     end
     return validated
