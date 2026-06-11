@@ -1036,6 +1036,7 @@ function Library:CreateWindow(config)
                 iconStartPos = icon.Position
             end
         end)
+        local iconLastInputPos = nil
         iconConns[#iconConns + 1] = UserInputService.InputChanged:Connect(function(input)
             if not iconDragging or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
                 return
@@ -1044,17 +1045,24 @@ function Library:CreateWindow(config)
                 input.UserInputType == Enum.UserInputType.MouseMovement
                 or input.UserInputType == Enum.UserInputType.Touch
             then
-                local delta = input.Position - iconDragStart
-                if delta.Magnitude > dragThreshold then
-                    iconDragMoved = true
-                end
-                icon.Position = UDim2.new(
-                    iconStartPos.X.Scale,
-                    iconStartPos.X.Offset + delta.X,
-                    iconStartPos.Y.Scale,
-                    iconStartPos.Y.Offset + delta.Y
-                )
+                iconLastInputPos = input.Position
             end
+        end)
+        iconConns[#iconConns + 1] = RunService.RenderStepped:Connect(function()
+            if not iconLastInputPos or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
+                return
+            end
+            local delta = iconLastInputPos - iconDragStart
+            if delta.Magnitude > dragThreshold then
+                iconDragMoved = true
+            end
+            icon.Position = UDim2.new(
+                iconStartPos.X.Scale,
+                iconStartPos.X.Offset + delta.X,
+                iconStartPos.Y.Scale,
+                iconStartPos.Y.Offset + delta.Y
+            )
+            iconLastInputPos = nil
         end)
         iconConns[#iconConns + 1] = UserInputService.InputEnded:Connect(function(input)
             if not iconDragging then
@@ -1092,40 +1100,57 @@ function Library:CreateWindow(config)
     local dragging, dragStart, startPos = false, nil, nil
     local resizing = false
     local resizeStartPos, resizeStartSize = nil, nil
-    local moveConn = nil
+    local moveConn, frameConn = nil, nil
+    local lastInputPos = nil
     local function onMove(input)
         if
             input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch
         then
-            if dragging and startPos then
-                local delta = input.Position - dragStart
-                self._win.Position = UDim2.new(
-                    startPos.X.Scale,
-                    startPos.X.Offset + delta.X,
-                    startPos.Y.Scale,
-                    startPos.Y.Offset + delta.Y
-                )
-            end
-            if resizing and resizeStartPos then
-                local delta = input.Position - resizeStartPos
-                local newWidth = math.clamp(resizeStartSize.X.Offset + delta.X, minWindowSize.X, maxWindowSize.X)
-                local newHeight = math.clamp(resizeStartSize.Y.Offset + delta.Y, minWindowSize.Y, maxWindowSize.Y)
-                self._win.Size = UDim2.new(0, newWidth, 0, newHeight)
-            end
+            lastInputPos = input.Position
         end
+    end
+    local function applyFrame()
+        if not lastInputPos then
+            return
+        end
+        if dragging and startPos then
+            local delta = lastInputPos - dragStart
+            self._win.Position =
+                UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+        if resizing and resizeStartPos then
+            local delta = lastInputPos - resizeStartPos
+            local newWidth = math.clamp(resizeStartSize.X.Offset + delta.X, minWindowSize.X, maxWindowSize.X)
+            local newHeight = math.clamp(resizeStartSize.Y.Offset + delta.Y, minWindowSize.Y, maxWindowSize.Y)
+            self._win.Size = UDim2.new(0, newWidth, 0, newHeight)
+        end
+        lastInputPos = nil
     end
     local function ensureMoveConn()
         if not moveConn then
             moveConn = UserInputService.InputChanged:Connect(onMove)
             self:AddConnection("inputChanged", moveConn)
         end
+        if not frameConn then
+            frameConn = RunService.RenderStepped:Connect(applyFrame)
+            self:AddConnection("dragRenderStep", frameConn)
+        end
     end
     local function releaseMoveConn()
-        if moveConn and not dragging and not resizing then
+        if dragging or resizing then
+            return
+        end
+        if moveConn then
             moveConn:Disconnect()
             moveConn = nil
         end
+        if frameConn then
+            applyFrame()
+            frameConn:Disconnect()
+            frameConn = nil
+        end
+        lastInputPos = nil
     end
     self:AddConnection(
         "headerDragStart",
@@ -1527,15 +1552,12 @@ function Library:CreatePage(name, title, imageId, order)
         ZIndex = 5,
     })
     new("UIListLayout", { Parent = contentContainer, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder })
-    new(
-        "UIPadding",
-        {
-            Parent = contentContainer,
-            PaddingTop = UDim.new(0, 2),
-            PaddingBottom = UDim.new(0, 2),
-            PaddingRight = UDim.new(0, 4),
-        }
-    )
+    new("UIPadding", {
+        Parent = contentContainer,
+        PaddingTop = UDim.new(0, 2),
+        PaddingBottom = UDim.new(0, 2),
+        PaddingRight = UDim.new(0, 4),
+    })
     self.pages[name] = { frame = page, title = title, content = contentContainer }
     local btn = new("TextButton", {
         Parent = self._navContainer,
