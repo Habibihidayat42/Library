@@ -1,4 +1,3 @@
---w
 local Library = {}
 local MAX_INPUT_LENGTH = 1000
 local function safecall(fn, ...)
@@ -53,6 +52,7 @@ local function warnLog(context, err)
         warn("[LynxGUI][" .. tostring(context) .. "] " .. tostring(err))
     end
 end
+local _autoSaveEnabled = true
 local CONFIG_FOLDER    = "LynxGUI_Configs"
 local CONFIG_FILE      = CONFIG_FOLDER .. "/lynx_config.json"
 local CurrentConfig    = {}
@@ -96,8 +96,6 @@ local fontSize = {
     normal = 11,
     small = 10,
 }
-
--- ─── Shared Utilities ────────────────────────────────────────────────
 
 local function disconnectAll(connList)
     for i = #connList, 1, -1 do
@@ -189,8 +187,6 @@ local function makeConfirmButton(section, title, confirmColor, onConfirm)
     return btnFrame
 end
 
--- ─── End Shared Utilities ────────────────────────────────────────────
-
 local function formatRichText(text)
     if type(text) ~= "string" or text == "" then
         return ""
@@ -253,11 +249,7 @@ function Library:Cleanup()
         pcall(function() task.cancel(self._saveThread) end)
         self._saveThread = nil
     end
-    if CallbackRegistry then
-        for k in pairs(CallbackRegistry) do
-            CallbackRegistry[k] = nil
-        end
-    end
+    table.clear(CallbackRegistry)
     if self.flags then table.clear(self.flags) end
     if self.pages then table.clear(self.pages) end
     if self._navButtons then table.clear(self._navButtons) end
@@ -401,9 +393,6 @@ local function RegisterCallback(configPath, callback, componentType, defaultValu
 end
 
 local function ExecuteConfigCallbacks()
-    -- Phase 1: restore every component's saved value + visual state WITHOUT
-    -- running any action callbacks. This guarantees that dropdown/input filter
-    -- values are already in place before any toggle action runs.
     for path, entry in pairs(CallbackRegistry) do
         if entry.updateVisual then
             local value = Library.ConfigSystem.Get(entry.path, entry.default)
@@ -411,11 +400,6 @@ local function ExecuteConfigCallbacks()
             if not ok then warnLog("ExecuteConfigCallbacks:Visual:" .. tostring(path), err) end
         end
     end
-    -- Phase 2: run action callbacks. Non-toggle components (dropdown, input,
-    -- etc.) run first so their filters/selections are fully applied, then
-    -- toggles run last -- a toggle like "Auto Favorite" therefore starts only
-    -- after its dropdown filter has been restored, fixing the load-order bug
-    -- where the toggle ran unfiltered on execute.
     local function runCallbacks(wantToggle)
         for path, entry in pairs(CallbackRegistry) do
             local isToggle = entry.type == "toggle"
@@ -429,7 +413,6 @@ local function ExecuteConfigCallbacks()
     runCallbacks(false)
     runCallbacks(true)
 end
-local _autoSaveEnabled = true
 _G.LynxGUI = _G.LynxGUI or {}
 _G.LynxGUI.AutoSaveEnabled = true
 function _G.LynxGUI.GetConfigValue(key, default)
@@ -887,9 +870,6 @@ function Library:CreateWindow(config)
     local dragging, dragStart, startPos = false, nil, nil
     local resizing = false
     local resizeStartPos, resizeStartSize = nil, nil
-    -- The move handler only needs to run while actively dragging/resizing, so we
-    -- connect UserInputService.InputChanged on drag start and disconnect it on
-    -- release. This avoids running any Lua on every mouse move / touch when idle.
     local moveConn = nil
     local function onMove(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
@@ -1066,10 +1046,6 @@ function Library:_createSearchBar()
         Visible = false,
         ZIndex = 62
     })
-    -- Pool of result rows: reused across searches instead of being destroyed and
-    -- rebuilt on every keystroke. Unused rows are just hidden (UIListLayout skips
-    -- invisible siblings), which avoids instance churn / GC pressure on low-end
-    -- and mobile devices.
     local rowPool = {}
     local function highlightFeature(frame)
         if not frame or not frame.Parent then return end
@@ -1222,8 +1198,6 @@ function Library:_createSearchBar()
         resultsPanel.Size = UDim2.new(0, searchW, 0, panelH)
         resultsPanel.Visible = true
     end
-    -- Debounce: rebuild results only after typing pauses briefly, so holding/
-    -- spamming keys on a low-end device doesn't rebuild the list every keystroke.
     local debouncedSearch = createDebouncedSearch(0.1, doSearch)
     self:AddConnection("searchTextChanged", searchBox:GetPropertyChangedSignal("Text"):Connect(function()
         local text = searchBox.Text
@@ -1335,7 +1309,7 @@ function Library:_switchPage(pageName)
     end
     for name, data in pairs(self._navButtons) do
         local isActive = name == pageName
-        data.btn.BackgroundColor3 = isActive and colors.bg2 or colors.bg2
+        data.btn.BackgroundColor3 = colors.bg2
         data.btn.BackgroundTransparency = isActive and sectionTransparency or 1
         local icon = data.btn:FindFirstChild("Icon")
         if icon then
@@ -1593,11 +1567,7 @@ function Library:_initDropdownSystem()
         Name = "DropdownPageLayout"
     })
     self:AddConnection("dropdownOverlayClose", closeOverlay.Activated:Connect(function()
-        if self._dropdownOverlay.Visible then
-            self._dropdownOverlay.BackgroundTransparency = 0.95
-            self._dropdownPanel.Position = UDim2.new(1, 172, 0.5, 0)
-            self._dropdownOverlay.Visible = false
-        end
+        self:_hideDropdown()
     end))
 end
 function Library:_showDropdown(dropdownContainer)
@@ -1754,8 +1724,6 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
     
     local function clearOptionFrames()
         disconnectOptionConns()
-        
-        -- Batch penghapusan Frame lama agar tidak lag saat refresh
         local framesToDelete = {}
         for _, child in scrollSelect:GetChildren() do
             if child:IsA("Frame") then 
@@ -1803,6 +1771,14 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             end
         end
         optionLabel.Text = (#texts == 0) and defaultText or table.concat(texts, ", ")
+    end
+
+    local function setLabelFromValue(val)
+        if isMulti then
+            optionLabel.Text = (type(val) == "table" and #val > 0) and table.concat(val, ", ") or defaultText
+        else
+            optionLabel.Text = (val ~= nil) and tostring(val) or defaultText
+        end
     end
     
     local function ensureBuilt()
@@ -1908,11 +1884,7 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         if isBuilt then
             refreshSelectionVisuals()
         else
-            if isMulti then
-                optionLabel.Text = (#DropdownFunc.Value == 0) and defaultText or table.concat(DropdownFunc.Value, ", ")
-            else
-                optionLabel.Text = (DropdownFunc.Value ~= nil) and tostring(DropdownFunc.Value) or defaultText
-            end
+            setLabelFromValue(DropdownFunc.Value)
         end
         if onSelect then
             if isMulti then
@@ -1932,9 +1904,6 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         if isMulti and type(selecting) ~= "table" then selecting = {} end
         clearOptionFrames()
         DropdownFunc.Options = newList
-        
-        -- Kita masukkan pembuatan elemen ke dalam task.spawn agar background UI
-        -- tidak menunggu operasi pemrosesan array besar selesai secara kaku.
         task.spawn(function()
             batchBuildOptions(newList, function(opt) DropdownFunc:AddOption(opt) end)
             isBuilt = true
@@ -1974,10 +1943,8 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
     if isMulti and type(DropdownFunc.Value) ~= "table" then
         DropdownFunc.Value = {}
     end
-    if not isMulti and DropdownFunc.Value ~= nil then
-        optionLabel.Text = tostring(DropdownFunc.Value)
-    elseif isMulti and type(DropdownFunc.Value) == "table" and #DropdownFunc.Value > 0 then
-        optionLabel.Text = table.concat(DropdownFunc.Value, ", ")
+    if (not isMulti and DropdownFunc.Value ~= nil) or (isMulti and #DropdownFunc.Value > 0) then
+        setLabelFromValue(DropdownFunc.Value)
     end
     
     if configPath then
@@ -1989,11 +1956,7 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             if isBuilt then
                 refreshSelectionVisuals()
             else
-                if isMulti then
-                    optionLabel.Text = (#val == 0) and defaultText or table.concat(val, ", ")
-                else
-                    optionLabel.Text = (val ~= nil) and tostring(val) or defaultText
-                end
+                setLabelFromValue(val)
             end
         end)
     end
@@ -2056,14 +2019,12 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
     })
     local function resolveValue(text)
         text = sanitizeInput(text, MAX_INPUT_LENGTH)
-        -- Don't convert long numbers (like Discord IDs) to number type
-        -- Lua numbers lose precision for IDs longer than 15 digits
         if type(text) == "string" and #text > 15 and text:match("^%d+$") then
-            return text  -- Keep as string for long numeric IDs
+            return text
         end
         local num = tonumber(text)
         if num then
-            if num ~= num then return 0 end  -- NaN guard
+            if num ~= num then return 0 end
             if num == math.huge or num == -math.huge then return 0 end
         end
         return num or text
@@ -2082,8 +2043,7 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         inputBox.Text = tostring(val ~= nil and val or defaultValue or "")
     end)
     if callback then
-        local resolved = resolveValue(tostring(initialValue))
-        callback(resolved)
+        safecall(callback, resolveValue(tostring(initialValue)))
     end
     return frame
 end
@@ -2131,16 +2091,12 @@ function Library:CreateButton(parent, label, callback)
     self:AddConnection("btn_click_" .. label .. tostring(button), button.MouseButton1Click:Connect(function()
         if isClicking then return end
         isClicking = true
-        
-        -- Jalankan callback di thread terpisah agar tidak membekukan UI
         if callback then
             task.spawn(function()
                 local ok, err = pcall(callback)
                 if not ok then warnLog("CreateButton:Callback:" .. tostring(label), err) end
             end)
         end
-        
-        -- Anti-spam klik cepat
         task.delay(0.1, function()
             isClicking = false
         end)
