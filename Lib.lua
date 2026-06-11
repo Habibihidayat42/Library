@@ -55,6 +55,7 @@ end
 local _autoSaveEnabled = true
 local CONFIG_FOLDER    = "LynxGUI_Configs"
 local CONFIG_FILE      = CONFIG_FOLDER .. "/lynx_config.json"
+local CONFIG_BACKUP    = CONFIG_FOLDER .. "/lynx_config.backup.json"
 local CurrentConfig    = {}
 local DefaultConfig    = {}
 local isDirty          = false
@@ -317,6 +318,7 @@ function Library.ConfigSystem.Load()
             if not raw or raw == "" then return end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
+                pcall(function() writefile(CONFIG_BACKUP, raw) end)
                 local validated = ValidateConfigTypes(loaded, DefaultConfig)
                 MergeTables(CurrentConfig, validated)
             end
@@ -358,6 +360,30 @@ function Library.ConfigSystem.Delete()
     if isfile(CONFIG_FILE) then
         delfile(CONFIG_FILE)
     end
+end
+function Library.ConfigSystem.RestoreBackup()
+    if not isfile(CONFIG_BACKUP) then
+        return false, "No backup file found"
+    end
+    local restored = false
+    local ok, err = pcall(function()
+        local raw = readfile(CONFIG_BACKUP)
+        if not raw or raw == "" then return end
+        local loaded = HttpService:JSONDecode(raw)
+        if type(loaded) ~= "table" then return end
+        CurrentConfig = DeepCopy(DefaultConfig)
+        MergeTables(CurrentConfig, ValidateConfigTypes(loaded, DefaultConfig))
+        restored = true
+    end)
+    if not ok then
+        warnLog("ConfigSystem.RestoreBackup", err)
+        return false, err
+    end
+    if not restored then
+        return false, "Backup file is empty or invalid"
+    end
+    Library.ConfigSystem.Save()
+    return true
 end
 local function MarkDirty()
     if not _autoSaveEnabled then return end
@@ -2245,6 +2271,22 @@ function Library:_createConfigTab(WindowObject)
             self:MakeNotify({
                 Title       = "Config",
                 Description = ok and "Config berhasil disimpan!" or ("Gagal menyimpan config: " .. tostring(err)),
+                Color       = ok and colors.success or Color3.fromRGB(220, 50, 50),
+                Delay       = ok and 2 or 4,
+            })
+        end,
+    })
+
+    mgmtSection:AddButton({
+        Title    = "Restore Backup",
+        Callback = function()
+            local ok, err = Library.ConfigSystem.RestoreBackup()
+            if ok then
+                ExecuteConfigCallbacks()
+            end
+            self:MakeNotify({
+                Title       = "Config",
+                Description = ok and "Backup berhasil dipulihkan!" or ("Gagal restore backup: " .. tostring(err)),
                 Color       = ok and colors.success or Color3.fromRGB(220, 50, 50),
                 Delay       = ok and 2 or 4,
             })
