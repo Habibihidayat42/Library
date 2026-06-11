@@ -58,6 +58,100 @@ local fontSize = {
     small = 10,
 }
 
+-- ─── Shared Utilities ────────────────────────────────────────────────
+
+local function disconnectAll(connList)
+    for i = #connList, 1, -1 do
+        local c = connList[i]
+        connList[i] = nil
+        pcall(function() c:Disconnect() end)
+    end
+end
+
+local function addHoverEffect(element, hoverColor, normalColor, propertyName)
+    propertyName = propertyName or "BackgroundColor3"
+    element.MouseEnter:Connect(function() element[propertyName] = hoverColor end)
+    element.MouseLeave:Connect(function() element[propertyName] = normalColor end)
+end
+
+local function createDebouncedSearch(delayTime, searchFn)
+    local thread = nil
+    return function(query)
+        if thread then
+            pcall(function() task.cancel(thread) end)
+            thread = nil
+        end
+        if query == "" then
+            searchFn(query)
+            return
+        end
+        thread = task.delay(delayTime, function()
+            thread = nil
+            searchFn(query)
+        end)
+    end
+end
+
+local function batchBuildOptions(list, addFn, batchSize)
+    batchSize = batchSize or 20
+    for i, opt in ipairs(list) do
+        addFn(opt)
+        if i % batchSize == 0 then
+            RunService.Heartbeat:Wait()
+        end
+    end
+end
+
+local function createDropdownController(uniqueId, options)
+    return {
+        _options = options,
+        SetOptions = function(self, newOptions)
+            self._options = newOptions
+            local flagObj = Library.flags[uniqueId]
+            if flagObj and flagObj.Refresh then
+                flagObj:Refresh(newOptions)
+            end
+        end,
+        GetOptions = function(self)
+            return self._options
+        end,
+    }
+end
+
+local function makeConfirmButton(section, title, confirmColor, onConfirm)
+    local confirmed = false
+    local thread = nil
+    local btnFrame
+    btnFrame = section:AddButton({
+        Title = title,
+        Callback = function()
+            if not confirmed then
+                confirmed = true
+                local btn = btnFrame:FindFirstChildWhichIsA("TextButton")
+                if btn then btn.Text = "Klik lagi untuk konfirmasi!" end
+                btnFrame.BackgroundColor3 = confirmColor
+                if thread then task.cancel(thread) end
+                thread = task.delay(3, function()
+                    confirmed = false
+                    local b = btnFrame:FindFirstChildWhichIsA("TextButton")
+                    if b then b.Text = title end
+                    btnFrame.BackgroundColor3 = colors.primary
+                end)
+            else
+                if thread then task.cancel(thread) end
+                confirmed = false
+                local btn = btnFrame:FindFirstChildWhichIsA("TextButton")
+                if btn then btn.Text = title end
+                btnFrame.BackgroundColor3 = colors.primary
+                onConfirm()
+            end
+        end
+    })
+    return btnFrame
+end
+
+-- ─── End Shared Utilities ────────────────────────────────────────────
+
 local function formatRichText(text)
     if type(text) ~= "string" or text == "" then
         return ""
@@ -669,11 +763,7 @@ function Library:CreateWindow(config)
         local iconDragMoved = false
         local dragThreshold = 6
         local function disconnectIconConns()
-            for i = #iconConns, 1, -1 do
-                local c = iconConns[i]
-                iconConns[i] = nil
-                pcall(function() c:Disconnect() end)
-            end
+            disconnectAll(iconConns)
         end
         local function restoreFromIcon()
             if not icon then return end
@@ -920,7 +1010,6 @@ function Library:_createSearchBar()
     -- invisible siblings), which avoids instance churn / GC pressure on low-end
     -- and mobile devices.
     local rowPool = {}
-    local searchThread = nil
     local function highlightFeature(frame)
         if not frame or not frame.Parent then return end
         local old = frame:FindFirstChild("__SearchHL")
@@ -1014,8 +1103,7 @@ function Library:_createSearchBar()
             ZIndex = 63
         })
         local data = {button = row, nameLabel = nameLabel, metaLabel = metaLabel, entry = nil}
-        row.MouseEnter:Connect(function() row.BackgroundColor3 = colors.bg4 end)
-        row.MouseLeave:Connect(function() row.BackgroundColor3 = colors.bg3 end)
+        addHoverEffect(row, colors.bg4, colors.bg3)
         row.MouseButton1Click:Connect(function()
             if data.entry then goToFeature(data.entry) end
         end)
@@ -1072,21 +1160,11 @@ function Library:_createSearchBar()
     end
     -- Debounce: rebuild results only after typing pauses briefly, so holding/
     -- spamming keys on a low-end device doesn't rebuild the list every keystroke.
+    local debouncedSearch = createDebouncedSearch(0.1, doSearch)
     self:AddConnection("searchTextChanged", searchBox:GetPropertyChangedSignal("Text"):Connect(function()
         local text = searchBox.Text
-        if searchThread then
-            pcall(function() task.cancel(searchThread) end)
-            searchThread = nil
-        end
-        if text == "" then
-            doSearch("")
-            return
-        end
-        clearBtn.Visible = true
-        searchThread = task.delay(0.1, function()
-            searchThread = nil
-            doSearch(text)
-        end)
+        clearBtn.Visible = (text ~= "")
+        debouncedSearch(text)
     end))
     self:AddConnection("searchFocused", searchBox.Focused:Connect(function()
         searchStroke.Color = colors.primary
@@ -1604,15 +1682,10 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
     local DropdownFunc = { Value = savedValue, Options = items }
     local optionFrameCache = {}
     local optionConns = {}
-    local searchThread = nil
     local isBuilt = false
     
     local function disconnectOptionConns()
-        for i = #optionConns, 1, -1 do
-            local c = optionConns[i]
-            optionConns[i] = nil
-            pcall(function() c:Disconnect() end)
-        end
+        disconnectAll(optionConns)
     end
     
     local function clearOptionFrames()
@@ -1671,17 +1744,7 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
     local function ensureBuilt()
         if isBuilt then return end
         clearOptionFrames()
-        local list = DropdownFunc.Options or {}
-        
-        -- Menggunakan teknik "yield" saat merender ratusan item
-        -- agar engine tidak freeze/lag saat membangun frame
-        local batchSize = 20
-        for i, opt in ipairs(list) do
-            DropdownFunc:AddOption(opt)
-            if i % batchSize == 0 then
-                RunService.Heartbeat:Wait()
-            end
-        end
+        batchBuildOptions(DropdownFunc.Options or {}, function(opt) DropdownFunc:AddOption(opt) end)
         isBuilt = true
         refreshSelectionVisuals()
     end
@@ -1809,13 +1872,7 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         -- Kita masukkan pembuatan elemen ke dalam task.spawn agar background UI
         -- tidak menunggu operasi pemrosesan array besar selesai secara kaku.
         task.spawn(function()
-            local batchSize = 20
-            for i, opt in ipairs(newList) do
-                DropdownFunc:AddOption(opt)
-                if i % batchSize == 0 then
-                    RunService.Heartbeat:Wait()
-                end
-            end
+            batchBuildOptions(newList, function(opt) DropdownFunc:AddOption(opt) end)
             isBuilt = true
             DropdownFunc:Set(selecting)
         end)
@@ -1825,27 +1882,16 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         self:SetValues(newList, isMulti and {} or nil)
     end
     
+    local debouncedDropdownSearch = createDebouncedSearch(0.08, function(query)
+        for _, entry in ipairs(optionFrameCache) do
+            if entry.frame and entry.frame.Parent then
+                entry.frame.Visible = (query == "") or (string.find(entry.lowerLabel, query, 1, true) ~= nil)
+            end
+        end
+    end)
     self:AddConnection("searchBox_" .. dropdownLayoutOrder, searchBox:GetPropertyChangedSignal("Text"):Connect(function()
         ensureBuilt()
-        if searchThread then
-            pcall(function() task.cancel(searchThread) end)
-            searchThread = nil
-        end
-        local query = string.lower(searchBox.Text)
-        if query == "" then
-            for _, entry in ipairs(optionFrameCache) do
-                if entry.frame and entry.frame.Parent then entry.frame.Visible = true end
-            end
-            return
-        end
-        searchThread = task.delay(0.08, function()
-            searchThread = nil
-            for _, entry in ipairs(optionFrameCache) do
-                if entry.frame and entry.frame.Parent then
-                    entry.frame.Visible = string.find(entry.lowerLabel, query, 1, true) ~= nil
-                end
-            end
-        end)
+        debouncedDropdownSearch(string.lower(searchBox.Text))
     end))
     
     self:AddConnection("dropdownOpen_" .. dropdownLayoutOrder, dropdownButton.Activated:Connect(function()
@@ -2175,81 +2221,31 @@ function Library:_createConfigTab(WindowObject)
         end,
     })
 
-    local resetConfirm = false
-    local resetThread  = nil
-    local resetBtnFrame
-    resetBtnFrame = mgmtSection:AddButton({
-        Title = "Reset to Default",
-        Callback = function()
-            if not resetConfirm then
-                resetConfirm = true
-                local btn = resetBtnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = "Klik lagi untuk konfirmasi!" end
-                resetBtnFrame.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
-                if resetThread then task.cancel(resetThread) end
-                resetThread = task.delay(3, function()
-                    resetConfirm = false
-                    local b = resetBtnFrame:FindFirstChildWhichIsA("TextButton")
-                    if b then b.Text = "Reset to Default" end
-                    resetBtnFrame.BackgroundColor3 = colors.primary
-                end)
-            else
-                if resetThread then task.cancel(resetThread) end
-                resetConfirm = false
-                local btn = resetBtnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = "Reset to Default" end
-                resetBtnFrame.BackgroundColor3 = colors.primary
-                Library.ConfigSystem.Reset()
-                ExecuteConfigCallbacks()
-                self:MakeNotify({
-                    Title       = "Config",
-                    Description = "Semua settingan direset ke default!",
-                    Color       = Color3.fromRGB(220, 50, 50),
-                    Delay       = 3,
-                })
-            end
-        end
-    })
+    makeConfirmButton(mgmtSection, "Reset to Default", Color3.fromRGB(255, 100, 0), function()
+        Library.ConfigSystem.Reset()
+        ExecuteConfigCallbacks()
+        self:MakeNotify({
+            Title       = "Config",
+            Description = "Semua settingan direset ke default!",
+            Color       = Color3.fromRGB(220, 50, 50),
+            Delay       = 3,
+        })
+    end)
     mgmtSection:AddParagraph({
         Title   = "⚠️ Perhatian",
         Content = "Setelah melakukan Reset to Default, beberapa settingan seperti Toggle dan nilai Input akan langsung ter-update di UI.\n\n"
                .. "Namun untuk settingan yang mempengaruhi karakter, kecepatan, atau fitur aktif lainnya — kamu perlu Rejoin / Respawn agar perubahan berlaku sepenuhnya.\n\n"
                .. "File config disimpan otomatis setiap 2 detik jika Auto Save aktif. Pastikan Auto Save ON sebelum keluar game agar settinganmu tidak hilang.",
     })
-    local deleteConfirm = false
-    local deleteThread  = nil
-    local deleteBtnFrame
-    deleteBtnFrame = mgmtSection:AddButton({
-        Title = "Delete Config File",
-        Callback = function()
-            if not deleteConfirm then
-                deleteConfirm = true
-                local btn = deleteBtnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = "Klik lagi untuk konfirmasi!" end
-                deleteBtnFrame.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
-                if deleteThread then task.cancel(deleteThread) end
-                deleteThread = task.delay(3, function()
-                    deleteConfirm = false
-                    local b = deleteBtnFrame:FindFirstChildWhichIsA("TextButton")
-                    if b then b.Text = "Delete Config File" end
-                    deleteBtnFrame.BackgroundColor3 = colors.primary
-                end)
-            else
-                if deleteThread then task.cancel(deleteThread) end
-                deleteConfirm = false
-                local btn = deleteBtnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = "Delete Config File" end
-                deleteBtnFrame.BackgroundColor3 = colors.primary
-                Library.ConfigSystem.Delete()
-                self:MakeNotify({
-                    Title       = "Config",
-                    Description = "File config telah dihapus.",
-                    Color       = Color3.fromRGB(220, 50, 50),
-                    Delay       = 2,
-                })
-            end
-        end
-    })
+    makeConfirmButton(mgmtSection, "Delete Config File", Color3.fromRGB(200, 30, 30), function()
+        Library.ConfigSystem.Delete()
+        self:MakeNotify({
+            Title       = "Config",
+            Description = "File config telah dihapus.",
+            Color       = Color3.fromRGB(220, 50, 50),
+            Delay       = 2,
+        })
+    end)
 end
 
 function Library:Window(config)
@@ -2390,18 +2386,7 @@ function Library:Window(config)
                     local frame = self._library:CreateMultiDropdown(self._container, title, nil, options, configPath, callback, uniqueId)
                     if frame then frame.LayoutOrder = getNextLayoutOrder() end
                     registerFeature(title, frame, "Dropdown")
-
-                    local dropdownObj = {
-                        _options = options,
-                        SetOptions = function(self, newOptions)
-                            self._options = newOptions
-                            local flagObj = Library.flags[uniqueId]
-                            if flagObj and flagObj.Refresh then
-                                flagObj:Refresh(newOptions)
-                            end
-                        end
-                    }
-                    return dropdownObj
+                    return createDropdownController(uniqueId, options)
                 end
                 if default and configPath then
                     local current = Library.ConfigSystem.Get(configPath, nil)
@@ -2412,20 +2397,7 @@ function Library:Window(config)
                 local frame = self._library:CreateDropdown(self._container, title, nil, options, configPath, callback, uniqueId, default)
                 if frame then frame.LayoutOrder = getNextLayoutOrder() end
                 registerFeature(title, frame, "Dropdown")
-                local dropdownObj = {
-                    _options = options,
-                    SetOptions = function(self, newOptions)
-                        self._options = newOptions
-                        local flagObj = Library.flags[uniqueId]
-                        if flagObj and flagObj.Refresh then
-                            flagObj:Refresh(newOptions)
-                        end
-                    end,
-                    GetOptions = function(self)
-                        return self._options
-                    end
-                }
-                return dropdownObj
+                return createDropdownController(uniqueId, options)
             end
             function SectionObject:AddInput(inputConfig)
                 inputConfig = inputConfig or {}
