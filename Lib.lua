@@ -1,72 +1,18 @@
 local Library = {}
-local MAX_INPUT_LENGTH = 1000
-local function safecall(fn, ...)
-    local ok, err = pcall(fn, ...)
-    if not ok and err then
-        warn("[LynxGUI] Error: " .. tostring(err))
-    end
-    return ok, err
-end
-local function stripRichTags(text)
-    if type(text) ~= "string" then return tostring(text or "") end
-    return (text:gsub("<[^>]+>", ""))
-end
-local function sanitizeInput(text, maxLen)
-    if type(text) ~= "string" then text = tostring(text or "") end
-    maxLen = maxLen or MAX_INPUT_LENGTH
-    if #text > maxLen then text = text:sub(1, maxLen) end
-    return text
-end
-local function ValidateConfigTypes(loaded, schema)
-    if type(loaded) ~= "table" or type(schema) ~= "table" then return loaded end
-    local validated = {}
-    for k, loadedVal in pairs(loaded) do
-        local schemaVal = schema[k]
-        if schemaVal == nil then
-            validated[k] = loadedVal
-        elseif type(schemaVal) == "table" and type(loadedVal) == "table" then
-            validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
-        elseif type(loadedVal) == type(schemaVal) then
-            validated[k] = loadedVal
-        end
-    end
-    return validated
-end
-Library.flags = {}
-Library.pages = {}
-Library._navButtons = {}
-Library._currentPage = nil
-Library._gui = nil
-Library._win = nil
-Library._sidebar = nil
-Library._contentBg = nil
-Library._pageTitle = nil
-Library._navContainer = nil
-Library._connections = {}
-Library._searchIndex = {}
-Library._saveThread = nil
-Library._initialized = false
 
-local function warnLog(context, err)
-    if warn then
-        warn("[LynxGUI][" .. tostring(context) .. "] " .. tostring(err))
-    end
-end
-local _autoSaveEnabled = true
-local CONFIG_FOLDER    = "LynxGUI_Configs"
-local CONFIG_FILE      = CONFIG_FOLDER .. "/lynx_config.json"
-local CONFIG_BACKUP    = CONFIG_FOLDER .. "/lynx_config.backup.json"
-local CurrentConfig    = {}
-local DefaultConfig    = {}
-local isDirty          = false
-local CallbackRegistry = {}
-local Players         = game:GetService("Players")
-local CoreGui         = game:GetService("CoreGui")
-local TweenService    = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local RunService      = game:GetService("RunService")
-local HttpService     = game:GetService("HttpService")
-local localPlayer     = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local localPlayer = Players.LocalPlayer
+
+local MAX_INPUT_LENGTH = 1000
+local CONFIG_FOLDER = "LynxGUI_Configs"
+local CONFIG_FILE = CONFIG_FOLDER .. "/lynx_config.json"
+local CONFIG_BACKUP = CONFIG_FOLDER .. "/lynx_config.backup.json"
+
 local colors = {
     primary = Color3.fromRGB(255, 140, 0),
     secondary = Color3.fromRGB(147, 112, 219),
@@ -98,25 +44,143 @@ local fontSize = {
     small = 10,
 }
 
+local TAB_ICONS = {
+    ["player"] = "rbxassetid://12120698352",
+    ["web"] = "rbxassetid://137601480983962",
+    ["bag"] = "rbxassetid://8601111810",
+    ["shop"] = "rbxassetid://4985385964",
+    ["cart"] = "rbxassetid://128874923961846",
+    ["plug"] = "rbxassetid://137601480983962",
+    ["settings"] = "rbxassetid://70386228443175",
+    ["loop"] = "rbxassetid://122032243989747",
+    ["gps"] = "rbxassetid://78381660144034",
+    ["compas"] = "rbxassetid://125300760963399",
+    ["gamepad"] = "rbxassetid://84173963561612",
+    ["boss"] = "rbxassetid://13132186360",
+    ["scroll"] = "rbxassetid://114127804740858",
+    ["menu"] = "rbxassetid://6340513838",
+    ["crosshair"] = "rbxassetid://12614416478",
+    ["user"] = "rbxassetid://108483430622128",
+    ["stat"] = "rbxassetid://12094445329",
+    ["eyes"] = "rbxassetid://14321059114",
+    ["sword"] = "rbxassetid://82472368671405",
+    ["discord"] = "rbxassetid://94434236999817",
+    ["star"] = "rbxassetid://107005941750079",
+    ["skeleton"] = "rbxassetid://17313330026",
+    ["payment"] = "rbxassetid://18747025078",
+    ["scan"] = "rbxassetid://109869955247116",
+    ["alert"] = "rbxassetid://73186275216515",
+    ["question"] = "rbxassetid://17510196486",
+    ["idea"] = "rbxassetid://16833255748",
+    ["strom"] = "rbxassetid://13321880293",
+    ["water"] = "rbxassetid://100076212630732",
+    ["dcs"] = "rbxassetid://15310731934",
+    ["start"] = "rbxassetid://108886429866687",
+    ["next"] = "rbxassetid://12662718374",
+    ["rod"] = "rbxassetid://103247953194129",
+    ["fish"] = "rbxassetid://97167558235554",
+    ["send"] = "rbxassetid://122775063389583",
+    ["home"] = "rbxassetid://86450224791749",
+}
+
+Library.flags = {}
+Library.pages = {}
+Library._navButtons = {}
+Library._currentPage = nil
+Library._gui = nil
+Library._win = nil
+Library._sidebar = nil
+Library._contentBg = nil
+Library._pageTitle = nil
+Library._navContainer = nil
+Library._connections = {}
+Library._searchIndex = {}
+Library._saveThread = nil
+Library._initialized = false
+
+local _autoSaveEnabled = true
+local CurrentConfig = {}
+local DefaultConfig = {}
+local isDirty = false
+local CallbackRegistry = {}
+
+local function warnLog(context, err)
+    if warn then
+        warn("[LynxGUI][" .. tostring(context) .. "] " .. tostring(err))
+    end
+end
+
+local function safecall(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok and err then
+        warn("[LynxGUI] Error: " .. tostring(err))
+    end
+    return ok, err
+end
+
+local function stripRichTags(text)
+    if type(text) ~= "string" then
+        return tostring(text or "")
+    end
+    return (text:gsub("<[^>]+>", ""))
+end
+
+local function sanitizeInput(text, maxLen)
+    if type(text) ~= "string" then
+        text = tostring(text or "")
+    end
+    maxLen = maxLen or MAX_INPUT_LENGTH
+    if #text > maxLen then
+        text = text:sub(1, maxLen)
+    end
+    return text
+end
+
+local function ValidateConfigTypes(loaded, schema)
+    if type(loaded) ~= "table" or type(schema) ~= "table" then
+        return loaded
+    end
+    local validated = {}
+    for k, loadedVal in pairs(loaded) do
+        local schemaVal = schema[k]
+        if schemaVal == nil then
+            validated[k] = loadedVal
+        elseif type(schemaVal) == "table" and type(loadedVal) == "table" then
+            validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
+        elseif type(loadedVal) == type(schemaVal) then
+            validated[k] = loadedVal
+        end
+    end
+    return validated
+end
+
 local function disconnectAll(connList)
     for i = #connList, 1, -1 do
         local c = connList[i]
         connList[i] = nil
-        pcall(function() c:Disconnect() end)
+        pcall(function()
+            c:Disconnect()
+        end)
     end
 end
 
 local function addHoverEffect(element, hoverColor, normalColor, propertyName)
     propertyName = propertyName or "BackgroundColor3"
-    element.MouseEnter:Connect(function() element[propertyName] = hoverColor end)
-    element.MouseLeave:Connect(function() element[propertyName] = normalColor end)
+    element.MouseEnter:Connect(function()
+        element[propertyName] = hoverColor
+    end)
+    element.MouseLeave:Connect(function()
+        element[propertyName] = normalColor
+    end)
 end
 
 local function createDebouncedSearch(delayTime, searchFn)
     local thread = nil
     return function(query)
         if thread then
-            pcall(function() task.cancel(thread) end)
+            pcall(function()
+                task.cancel(thread)
+            end)
             thread = nil
         end
         if query == "" then
@@ -166,24 +230,34 @@ local function makeConfirmButton(section, title, confirmColor, onConfirm)
             if not confirmed then
                 confirmed = true
                 local btn = btnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = "Klik lagi untuk konfirmasi!" end
+                if btn then
+                    btn.Text = "Klik lagi untuk konfirmasi!"
+                end
                 btnFrame.BackgroundColor3 = confirmColor
-                if thread then task.cancel(thread) end
+                if thread then
+                    task.cancel(thread)
+                end
                 thread = task.delay(3, function()
                     confirmed = false
                     local b = btnFrame:FindFirstChildWhichIsA("TextButton")
-                    if b then b.Text = title end
+                    if b then
+                        b.Text = title
+                    end
                     btnFrame.BackgroundColor3 = colors.primary
                 end)
             else
-                if thread then task.cancel(thread) end
+                if thread then
+                    task.cancel(thread)
+                end
                 confirmed = false
                 local btn = btnFrame:FindFirstChildWhichIsA("TextButton")
-                if btn then btn.Text = title end
+                if btn then
+                    btn.Text = title
+                end
                 btnFrame.BackgroundColor3 = colors.primary
                 onConfirm()
             end
-        end
+        end,
     })
     return btnFrame
 end
@@ -192,12 +266,14 @@ local function formatRichText(text)
     if type(text) ~= "string" or text == "" then
         return ""
     end
-    return (text:gsub('<font color="rgb%s*%(%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*%)">', function(r, g, b)
-        r = math.clamp(math.floor(tonumber(r) or 0), 0, 255)
-        g = math.clamp(math.floor(tonumber(g) or 0), 0, 255)
-        b = math.clamp(math.floor(tonumber(b) or 0), 0, 255)
-        return string.format('<font color="#%02X%02X%02X">', r, g, b)
-    end))
+    return (
+        text:gsub('<font color="rgb%s*%(%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*%)">', function(r, g, b)
+            r = math.clamp(math.floor(tonumber(r) or 0), 0, 255)
+            g = math.clamp(math.floor(tonumber(g) or 0), 0, 255)
+            b = math.clamp(math.floor(tonumber(b) or 0), 0, 255)
+            return string.format('<font color="#%02X%02X%02X">', r, g, b)
+        end)
+    )
 end
 
 local function new(class, props)
@@ -206,15 +282,21 @@ local function new(class, props)
         local fontVal = props.Font
         local fontFaceVal = props.FontFace
         local parentVal = props.Parent
-        
+
         for k, v in pairs(props) do
             if k ~= "Font" and k ~= "FontFace" and k ~= "Parent" then
                 inst[k] = v
             end
         end
-        if fontVal then inst.Font = fontVal end
-        if fontFaceVal then inst.FontFace = fontFaceVal end
-        if parentVal then inst.Parent = parentVal end
+        if fontVal then
+            inst.Font = fontVal
+        end
+        if fontFaceVal then
+            inst.FontFace = fontFaceVal
+        end
+        if parentVal then
+            inst.Parent = parentVal
+        end
     end
     if (class == "TextLabel" or class == "TextButton" or class == "TextBox") and not props then
         inst.Font = Enum.Font.Gotham
@@ -227,34 +309,56 @@ local function new(class, props)
 end
 function Library:AddConnection(name, connection)
     if self._connections[name] then
-        local ok, err = pcall(function() self._connections[name]:Disconnect() end)
-        if not ok then warnLog("AddConnection:Disconnect", err) end
+        local ok, err = pcall(function()
+            self._connections[name]:Disconnect()
+        end)
+        if not ok then
+            warnLog("AddConnection:Disconnect", err)
+        end
     end
     self._connections[name] = connection
     return connection
 end
 function Library:Cleanup()
     if isDirty then
-        local ok, err = pcall(function() Library.ConfigSystem.Save() end)
-        if not ok then warnLog("Cleanup:Save", err) end
+        local ok, err = pcall(function()
+            Library.ConfigSystem.Save()
+        end)
+        if not ok then
+            warnLog("Cleanup:Save", err)
+        end
         isDirty = false
     end
     if self._connections then
         for name, conn in pairs(self._connections) do
-            local ok, err = pcall(function() conn:Disconnect() end)
-            if not ok then warnLog("Cleanup:Disconnect:" .. tostring(name), err) end
+            local ok, err = pcall(function()
+                conn:Disconnect()
+            end)
+            if not ok then
+                warnLog("Cleanup:Disconnect:" .. tostring(name), err)
+            end
         end
         table.clear(self._connections)
     end
     if self._saveThread then
-        pcall(function() task.cancel(self._saveThread) end)
+        pcall(function()
+            task.cancel(self._saveThread)
+        end)
         self._saveThread = nil
     end
     table.clear(CallbackRegistry)
-    if self.flags then table.clear(self.flags) end
-    if self.pages then table.clear(self.pages) end
-    if self._navButtons then table.clear(self._navButtons) end
-    if self._searchIndex then table.clear(self._searchIndex) end
+    if self.flags then
+        table.clear(self.flags)
+    end
+    if self.pages then
+        table.clear(self.pages)
+    end
+    if self._navButtons then
+        table.clear(self._navButtons)
+    end
+    if self._searchIndex then
+        table.clear(self._searchIndex)
+    end
     self._dropdownOverlay = nil
     self._dropdownPanel = nil
     self._dropdownFolder = nil
@@ -263,7 +367,9 @@ function Library:Cleanup()
     if self._activeNotifs then
         for _, notif in ipairs(self._activeNotifs) do
             pcall(function()
-                if notif and notif.Parent then notif:Destroy() end
+                if notif and notif.Parent then
+                    notif:Destroy()
+                end
             end)
         end
         table.clear(self._activeNotifs)
@@ -273,8 +379,12 @@ function Library:Cleanup()
 end
 local function DeepCopy(original, _seen)
     _seen = _seen or {}
-    if type(original) ~= "table" then return original end
-    if _seen[original] then return _seen[original] end
+    if type(original) ~= "table" then
+        return original
+    end
+    if _seen[original] then
+        return _seen[original]
+    end
     local copy = {}
     _seen[original] = copy
     for k, v in pairs(original) do
@@ -292,7 +402,9 @@ local function MergeTables(target, source)
     end
 end
 local function EnsureFolderExists()
-    if not isfolder(CONFIG_FOLDER) then makefolder(CONFIG_FOLDER) end
+    if not isfolder(CONFIG_FOLDER) then
+        makefolder(CONFIG_FOLDER)
+    end
 end
 Library.ConfigSystem = {}
 function Library.ConfigSystem.SetDefaults(defaults)
@@ -315,39 +427,57 @@ function Library.ConfigSystem.Load()
     if isfile(CONFIG_FILE) then
         local ok, err = pcall(function()
             local raw = readfile(CONFIG_FILE)
-            if not raw or raw == "" then return end
+            if not raw or raw == "" then
+                return
+            end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
-                pcall(function() writefile(CONFIG_BACKUP, raw) end)
+                pcall(function()
+                    writefile(CONFIG_BACKUP, raw)
+                end)
                 local validated = ValidateConfigTypes(loaded, DefaultConfig)
                 MergeTables(CurrentConfig, validated)
             end
         end)
         if not ok then
             warnLog("ConfigSystem.Load", "Corrupt config, resetting to defaults: " .. tostring(err))
-            local delOk, delErr = pcall(function() delfile(CONFIG_FILE) end)
-            if not delOk then warnLog("ConfigSystem.Load:Delete", delErr) end
+            local delOk, delErr = pcall(function()
+                delfile(CONFIG_FILE)
+            end)
+            if not delOk then
+                warnLog("ConfigSystem.Load:Delete", delErr)
+            end
             CurrentConfig = DeepCopy(DefaultConfig)
         end
     end
     return CurrentConfig
 end
 function Library.ConfigSystem.Get(path, default)
-    if not path then return default end
+    if not path then
+        return default
+    end
     local value = CurrentConfig
     for key in string.gmatch(path, "[^.]+") do
-        if type(value) ~= "table" then return default end
+        if type(value) ~= "table" then
+            return default
+        end
         value = value[key]
     end
     return value ~= nil and value or default
 end
 function Library.ConfigSystem.Set(path, value)
-    if not path then return end
+    if not path then
+        return
+    end
     local keys = {}
-    for key in string.gmatch(path, "[^.]+") do table.insert(keys, key) end
+    for key in string.gmatch(path, "[^.]+") do
+        table.insert(keys, key)
+    end
     local target = CurrentConfig
     for i = 1, #keys - 1 do
-        if type(target[keys[i]]) ~= "table" then target[keys[i]] = {} end
+        if type(target[keys[i]]) ~= "table" then
+            target[keys[i]] = {}
+        end
         target = target[keys[i]]
     end
     target[keys[#keys]] = value
@@ -368,9 +498,13 @@ function Library.ConfigSystem.RestoreBackup()
     local restored = false
     local ok, err = pcall(function()
         local raw = readfile(CONFIG_BACKUP)
-        if not raw or raw == "" then return end
+        if not raw or raw == "" then
+            return
+        end
         local loaded = HttpService:JSONDecode(raw)
-        if type(loaded) ~= "table" then return end
+        if type(loaded) ~= "table" then
+            return
+        end
         CurrentConfig = DeepCopy(DefaultConfig)
         MergeTables(CurrentConfig, ValidateConfigTypes(loaded, DefaultConfig))
         restored = true
@@ -386,10 +520,14 @@ function Library.ConfigSystem.RestoreBackup()
     return true
 end
 local function MarkDirty()
-    if not _autoSaveEnabled then return end
+    if not _autoSaveEnabled then
+        return
+    end
     isDirty = true
     if Library._saveThread then
-        pcall(function() task.cancel(Library._saveThread) end)
+        pcall(function()
+            task.cancel(Library._saveThread)
+        end)
         Library._saveThread = nil
     end
     Library._saveThread = task.delay(2, function()
@@ -397,7 +535,9 @@ local function MarkDirty()
             Library._saveThread = nil
             return
         end
-        local ok, err = pcall(function() Library.ConfigSystem.Save() end)
+        local ok, err = pcall(function()
+            Library.ConfigSystem.Save()
+        end)
         if not ok then
             warnLog("MarkDirty:AutoSave", err)
         end
@@ -408,12 +548,14 @@ local function MarkDirty()
     end)
 end
 local function RegisterCallback(configPath, callback, componentType, defaultValue, updateVisualFn)
-    if not configPath then return end
+    if not configPath then
+        return
+    end
     CallbackRegistry[configPath] = {
-        path         = configPath,
-        callback     = callback,
-        type         = componentType,
-        default      = defaultValue,
+        path = configPath,
+        callback = callback,
+        type = componentType,
+        default = defaultValue,
         updateVisual = updateVisualFn,
     }
 end
@@ -423,7 +565,9 @@ local function ExecuteConfigCallbacks()
         if entry.updateVisual then
             local value = Library.ConfigSystem.Get(entry.path, entry.default)
             local ok, err = pcall(entry.updateVisual, value)
-            if not ok then warnLog("ExecuteConfigCallbacks:Visual:" .. tostring(path), err) end
+            if not ok then
+                warnLog("ExecuteConfigCallbacks:Visual:" .. tostring(path), err)
+            end
         end
     end
     local function runCallbacks(wantToggle)
@@ -432,7 +576,9 @@ local function ExecuteConfigCallbacks()
             if entry.callback and isToggle == wantToggle then
                 local value = Library.ConfigSystem.Get(entry.path, entry.default)
                 local ok, err = pcall(entry.callback, value)
-                if not ok then warnLog("ExecuteConfigCallbacks:Callback:" .. tostring(path), err) end
+                if not ok then
+                    warnLog("ExecuteConfigCallbacks:Callback:" .. tostring(path), err)
+                end
             end
         end
     end
@@ -480,7 +626,7 @@ function Library:CreateWindow(config)
         IgnoreGuiInset = true,
         ResetOnSpawn = false,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        DisplayOrder = 2147483647
+        DisplayOrder = 2147483647,
     })
     local function bringToFront()
         self._gui.DisplayOrder = 2147483647
@@ -488,14 +634,14 @@ function Library:CreateWindow(config)
     self._win = new("Frame", {
         Parent = self._gui,
         Size = windowSize,
-        Position = UDim2.new(0.5, -windowSize.X.Offset/2, 0.5, -windowSize.Y.Offset/2),
+        Position = UDim2.new(0.5, -windowSize.X.Offset / 2, 0.5, -windowSize.Y.Offset / 2),
         BackgroundColor3 = colors.bg1,
         BackgroundTransparency = panelTransparency,
         BorderSizePixel = 0,
         ClipsDescendants = false,
-        ZIndex = 3
+        ZIndex = 3,
     })
-    new("UICorner", {Parent = self._win, CornerRadius = UDim.new(0, 7)})
+    new("UICorner", { Parent = self._win, CornerRadius = UDim.new(0, 7) })
     self._sidebar = new("Frame", {
         Parent = self._win,
         Size = UDim2.new(0, sidebarWidth, 1, -headerHeight),
@@ -503,16 +649,16 @@ function Library:CreateWindow(config)
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-        ZIndex = 4
+        ZIndex = 4,
     })
-    local sidebarLine = new("Frame", {
+    new("Frame", {
         Parent = self._sidebar,
         Size = UDim2.new(0, 1, 1, 0),
         Position = UDim2.new(1, 0, 0, 0),
         BackgroundColor3 = colors.border,
         BackgroundTransparency = 0.42,
         BorderSizePixel = 0,
-        ZIndex = 4
+        ZIndex = 4,
     })
     local scriptHeader = new("TextButton", {
         Parent = self._win,
@@ -522,16 +668,16 @@ function Library:CreateWindow(config)
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
-        ZIndex = 5
+        ZIndex = 5,
     })
-    local headerLine = new("Frame", {
+    new("Frame", {
         Parent = scriptHeader,
         Size = UDim2.new(1, -20, 0, 1),
         Position = UDim2.new(0, 10, 1, -1),
         BackgroundColor3 = colors.border,
         BackgroundTransparency = 0.62,
         BorderSizePixel = 0,
-        ZIndex = 5
+        ZIndex = 5,
     })
     local headerDragHandle = new("Frame", {
         Parent = scriptHeader,
@@ -540,9 +686,9 @@ function Library:CreateWindow(config)
         BackgroundColor3 = colors.primary,
         BackgroundTransparency = 0.35,
         BorderSizePixel = 0,
-        ZIndex = 6
+        ZIndex = 6,
     })
-    new("UICorner", {Parent = headerDragHandle, CornerRadius = UDim.new(0, 2)})
+    new("UICorner", { Parent = headerDragHandle, CornerRadius = UDim.new(0, 2) })
     new("TextLabel", {
         Parent = scriptHeader,
         Text = title,
@@ -553,7 +699,7 @@ function Library:CreateWindow(config)
         TextSize = fontSize.title,
         TextColor3 = colors.primary,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 6
+        ZIndex = 6,
     })
     new("ImageLabel", {
         Parent = scriptHeader,
@@ -562,7 +708,7 @@ function Library:CreateWindow(config)
         Position = UDim2.new(0, 58, 0.5, -8),
         BackgroundTransparency = 1,
         ImageColor3 = colors.primary,
-        ZIndex = 6
+        ZIndex = 6,
     })
     local separator = new("Frame", {
         Parent = scriptHeader,
@@ -571,9 +717,9 @@ function Library:CreateWindow(config)
         BackgroundColor3 = colors.border,
         BackgroundTransparency = 0.2,
         BorderSizePixel = 0,
-        ZIndex = 6
+        ZIndex = 6,
     })
-    new("UICorner", {Parent = separator, CornerRadius = UDim.new(0, 2)})
+    new("UICorner", { Parent = separator, CornerRadius = UDim.new(0, 2) })
     new("TextLabel", {
         Parent = scriptHeader,
         Text = subtitle,
@@ -584,7 +730,7 @@ function Library:CreateWindow(config)
         TextSize = fontSize.small,
         TextColor3 = colors.textDim,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 6
+        ZIndex = 6,
     })
     local btnMinHeader = new("TextButton", {
         Parent = scriptHeader,
@@ -595,14 +741,14 @@ function Library:CreateWindow(config)
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
-        ZIndex = 7
+        ZIndex = 7,
     })
-    new("UICorner", {Parent = btnMinHeader, CornerRadius = UDim.new(0, 5)})
+    new("UICorner", { Parent = btnMinHeader, CornerRadius = UDim.new(0, 5) })
     local btnMinStroke = new("UIStroke", {
         Parent = btnMinHeader,
         Color = colors.border,
         Thickness = 1,
-        Transparency = 0.4
+        Transparency = 0.4,
     })
     local minLine = new("Frame", {
         Parent = btnMinHeader,
@@ -610,9 +756,9 @@ function Library:CreateWindow(config)
         Position = UDim2.new(0.5, -5, 0.5, -1),
         BackgroundColor3 = colors.primary,
         BorderSizePixel = 0,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = minLine, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = minLine, CornerRadius = UDim.new(1, 0) })
     local function setMinimizeHover(hovering)
         btnMinHeader.BackgroundColor3 = hovering and colors.bg3 or colors.bg2
         btnMinStroke.Color = hovering and colors.primary or colors.border
@@ -620,16 +766,23 @@ function Library:CreateWindow(config)
         minLine.Size = hovering and UDim2.new(0, 12, 0, 2) or UDim2.new(0, 10, 0, 2)
         minLine.Position = hovering and UDim2.new(0.5, -6, 0.5, -1) or UDim2.new(0.5, -5, 0.5, -1)
     end
-    self:AddConnection("minimizeHoverIn", btnMinHeader.MouseEnter:Connect(function()
-        setMinimizeHover(true)
-    end))
-    self:AddConnection("minimizeHoverOut", btnMinHeader.MouseLeave:Connect(function()
-        setMinimizeHover(false)
-    end))
+    self:AddConnection(
+        "minimizeHoverIn",
+        btnMinHeader.MouseEnter:Connect(function()
+            setMinimizeHover(true)
+        end)
+    )
+    self:AddConnection(
+        "minimizeHoverOut",
+        btnMinHeader.MouseLeave:Connect(function()
+            setMinimizeHover(false)
+        end)
+    )
     local discordLink = "https://discord.gg/lynxx"
     local discordText = "discord.gg/lynxx"
     local discordTextStart = 33
-    local discordTextW = game:GetService("TextService"):GetTextSize(discordText, fontSize.small, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
+    local discordTextW = game:GetService("TextService")
+        :GetTextSize(discordText, fontSize.small, Enum.Font.GothamBold, Vector2.new(1000, 100)).X
     local discordPillW = math.ceil(discordTextStart + discordTextW + 9)
     local btnDiscord = new("TextButton", {
         Parent = scriptHeader,
@@ -639,7 +792,7 @@ function Library:CreateWindow(config)
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
-        ZIndex = 7
+        ZIndex = 7,
     })
     new("ImageLabel", {
         Parent = btnDiscord,
@@ -648,7 +801,7 @@ function Library:CreateWindow(config)
         Position = UDim2.new(0, 8, 0.5, -7.5),
         BackgroundTransparency = 1,
         ImageColor3 = colors.primary,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local discordSep = new("Frame", {
         Parent = btnDiscord,
@@ -657,17 +810,17 @@ function Library:CreateWindow(config)
         BackgroundColor3 = colors.primary,
         BackgroundTransparency = 0.45,
         BorderSizePixel = 0,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = discordSep, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = discordSep, CornerRadius = UDim.new(1, 0) })
     new("UIGradient", {
         Parent = discordSep,
         Rotation = 90,
         Transparency = NumberSequence.new({
             NumberSequenceKeypoint.new(0, 1),
             NumberSequenceKeypoint.new(0.5, 0),
-            NumberSequenceKeypoint.new(1, 1)
-        })
+            NumberSequenceKeypoint.new(1, 1),
+        }),
     })
     local discordTitle = new("TextLabel", {
         Parent = btnDiscord,
@@ -680,28 +833,44 @@ function Library:CreateWindow(config)
         TextColor3 = colors.primary,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextTruncate = Enum.TextTruncate.AtEnd,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local function setDiscordHover(hovering)
         discordTitle.TextColor3 = hovering and colors.text or colors.primary
     end
     local function copyDiscord()
-        local clip = setclipboard or toclipboard or writeclipboard or (Clipboard and Clipboard.set) or (clipboard and clipboard.set)
+        local clip = setclipboard
+            or toclipboard
+            or writeclipboard
+            or (Clipboard and Clipboard.set)
+            or (clipboard and clipboard.set)
         local ok = false
-        if clip then ok = pcall(clip, discordLink) end
+        if clip then
+            ok = pcall(clip, discordLink)
+        end
         if ok then
-            self:MakeNotify({Title = "Discord", Description = "Invite link disalin ke clipboard!", Color = colors.primary})
+            self:MakeNotify({
+                Title = "Discord",
+                Description = "Invite link disalin ke clipboard!",
+                Color = colors.primary,
+            })
         else
-            self:MakeNotify({Title = "Discord", Description = discordLink, Color = colors.primary, Delay = 6})
+            self:MakeNotify({ Title = "Discord", Description = discordLink, Color = colors.primary, Delay = 6 })
         end
     end
     self:AddConnection("discordClick", btnDiscord.MouseButton1Click:Connect(copyDiscord))
-    self:AddConnection("discordHoverIn", btnDiscord.MouseEnter:Connect(function()
-        setDiscordHover(true)
-    end))
-    self:AddConnection("discordHoverOut", btnDiscord.MouseLeave:Connect(function()
-        setDiscordHover(false)
-    end))
+    self:AddConnection(
+        "discordHoverIn",
+        btnDiscord.MouseEnter:Connect(function()
+            setDiscordHover(true)
+        end)
+    )
+    self:AddConnection(
+        "discordHoverOut",
+        btnDiscord.MouseLeave:Connect(function()
+            setDiscordHover(false)
+        end)
+    )
     self._navContainer = new("ScrollingFrame", {
         Parent = self._sidebar,
         Size = UDim2.new(1, -10, 1, -39),
@@ -713,9 +882,12 @@ function Library:CreateWindow(config)
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ClipsDescendants = true,
-        ZIndex = 5
+        ZIndex = 5,
     })
-    new("UIListLayout", {Parent = self._navContainer, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder})
+    new(
+        "UIListLayout",
+        { Parent = self._navContainer, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }
+    )
     self._contentBg = new("Frame", {
         Parent = self._win,
         Size = UDim2.new(1, -(sidebarWidth + 6), 1, -(headerHeight + 3)),
@@ -723,7 +895,7 @@ function Library:CreateWindow(config)
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-        ZIndex = 4
+        ZIndex = 4,
     })
     local topBar = new("Frame", {
         Parent = self._contentBg,
@@ -731,7 +903,7 @@ function Library:CreateWindow(config)
         Position = UDim2.new(0, 2, 0, 2),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        ZIndex = 5
+        ZIndex = 5,
     })
     local pageTitleAccent = new("Frame", {
         Parent = topBar,
@@ -740,9 +912,9 @@ function Library:CreateWindow(config)
         BackgroundColor3 = colors.primary,
         BackgroundTransparency = 0,
         BorderSizePixel = 0,
-        ZIndex = 6
+        ZIndex = 6,
     })
-    new("UICorner", {Parent = pageTitleAccent, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = pageTitleAccent, CornerRadius = UDim.new(1, 0) })
     self._pageTitle = new("TextLabel", {
         Parent = topBar,
         Text = "Dashboard",
@@ -754,7 +926,7 @@ function Library:CreateWindow(config)
         TextColor3 = colors.text,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
-        ZIndex = 6
+        ZIndex = 6,
     })
     new("Frame", {
         Parent = topBar,
@@ -763,7 +935,7 @@ function Library:CreateWindow(config)
         BackgroundColor3 = colors.border,
         BackgroundTransparency = 0.7,
         BorderSizePixel = 0,
-        ZIndex = 5
+        ZIndex = 5,
     })
     local resizeHandle = new("TextButton", {
         Parent = self._win,
@@ -774,7 +946,7 @@ function Library:CreateWindow(config)
         BorderSizePixel = 0,
         Text = "",
         AutoButtonColor = false,
-        ZIndex = 100
+        ZIndex = 100,
     })
     local function addResizeGripLine(offsetX, offsetY, length)
         local line = new("Frame", {
@@ -786,9 +958,9 @@ function Library:CreateWindow(config)
             BackgroundColor3 = colors.textDim,
             BackgroundTransparency = 0.35,
             BorderSizePixel = 0,
-            ZIndex = 101
+            ZIndex = 101,
         })
-        new("UICorner", {Parent = line, CornerRadius = UDim.new(1, 0)})
+        new("UICorner", { Parent = line, CornerRadius = UDim.new(1, 0) })
     end
     addResizeGripLine(-3, -3, 6)
     addResizeGripLine(-7, -3, 6)
@@ -800,7 +972,9 @@ function Library:CreateWindow(config)
     local savedWinSize = self._win.Size
     local minimizedIconSize = 40
     local function createMinimizedIcon()
-        if icon then return end
+        if icon then
+            return
+        end
         icon = new("ImageButton", {
             Parent = self._gui,
             Size = UDim2.new(0, minimizedIconSize, 0, minimizedIconSize),
@@ -812,9 +986,9 @@ function Library:CreateWindow(config)
             ScaleType = Enum.ScaleType.Fit,
             AutoButtonColor = false,
             Active = true,
-            ZIndex = 50
+            ZIndex = 50,
         })
-        new("UICorner", {Parent = icon, CornerRadius = UDim.new(0, 6)})
+        new("UICorner", { Parent = icon, CornerRadius = UDim.new(0, 6) })
         new("TextLabel", {
             Parent = icon,
             Text = "L",
@@ -824,7 +998,7 @@ function Library:CreateWindow(config)
             BackgroundTransparency = 1,
             TextColor3 = colors.primary,
             Visible = icon.Image == "",
-            ZIndex = 51
+            ZIndex = 51,
         })
         local iconConns = {}
         local iconDragging = false
@@ -836,7 +1010,9 @@ function Library:CreateWindow(config)
             disconnectAll(iconConns)
         end
         local function restoreFromIcon()
-            if not icon then return end
+            if not icon then
+                return
+            end
             bringToFront()
             self._win.Visible = true
             self._win.Size = savedWinSize
@@ -847,8 +1023,13 @@ function Library:CreateWindow(config)
             minimized = false
         end
         iconConns[#iconConns + 1] = icon.InputBegan:Connect(function(input)
-            if iconDragging then return end
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if iconDragging then
+                return
+            end
+            if
+                input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
                 iconDragging = true
                 iconDragMoved = false
                 iconDragStart = input.Position
@@ -856,21 +1037,33 @@ function Library:CreateWindow(config)
             end
         end)
         iconConns[#iconConns + 1] = UserInputService.InputChanged:Connect(function(input)
-            if not iconDragging or not icon or not icon.Parent or not iconStartPos or not iconDragStart then return end
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            if not iconDragging or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
+                return
+            end
+            if
+                input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
                 local delta = input.Position - iconDragStart
                 if delta.Magnitude > dragThreshold then
                     iconDragMoved = true
                 end
                 icon.Position = UDim2.new(
-                    iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X,
-                    iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y
+                    iconStartPos.X.Scale,
+                    iconStartPos.X.Offset + delta.X,
+                    iconStartPos.Y.Scale,
+                    iconStartPos.Y.Offset + delta.Y
                 )
             end
         end)
         iconConns[#iconConns + 1] = UserInputService.InputEnded:Connect(function(input)
-            if not iconDragging then return end
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if not iconDragging then
+                return
+            end
+            if
+                input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
                 iconDragging = false
                 if icon and icon.Parent then
                     savedIconPos = icon.Position
@@ -882,26 +1075,37 @@ function Library:CreateWindow(config)
         end)
         icon.Destroying:Connect(disconnectIconConns)
     end
-    self:AddConnection("minimizeBtn", btnMinHeader.MouseButton1Click:Connect(function()
-        if not minimized then
-            savedWinPos = self._win.Position
-            savedWinSize = self._win.Size
-            self._win.Size = UDim2.new(0, 0, 0, 0)
-            self._win.Position = UDim2.new(0.5, 0, 0.5, 0)
-            self._win.Visible = false
-            createMinimizedIcon()
-            minimized = true
-        end
-    end))
+    self:AddConnection(
+        "minimizeBtn",
+        btnMinHeader.MouseButton1Click:Connect(function()
+            if not minimized then
+                savedWinPos = self._win.Position
+                savedWinSize = self._win.Size
+                self._win.Size = UDim2.new(0, 0, 0, 0)
+                self._win.Position = UDim2.new(0.5, 0, 0.5, 0)
+                self._win.Visible = false
+                createMinimizedIcon()
+                minimized = true
+            end
+        end)
+    )
     local dragging, dragStart, startPos = false, nil, nil
     local resizing = false
     local resizeStartPos, resizeStartSize = nil, nil
     local moveConn = nil
     local function onMove(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        if
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        then
             if dragging and startPos then
                 local delta = input.Position - dragStart
-                self._win.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                self._win.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
             end
             if resizing and resizeStartPos then
                 local delta = input.Position - resizeStartPos
@@ -923,26 +1127,44 @@ function Library:CreateWindow(config)
             moveConn = nil
         end
     end
-    self:AddConnection("headerDragStart", scriptHeader.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            bringToFront()
-            dragging, dragStart, startPos = true, input.Position, self._win.Position
-            ensureMoveConn()
-        end
-    end))
-    self:AddConnection("resizeDragStart", resizeHandle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            resizing, resizeStartPos, resizeStartSize = true, input.Position, self._win.Size
-            ensureMoveConn()
-        end
-    end))
-    self:AddConnection("inputEnded", UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            resizing = false
-            releaseMoveConn()
-        end
-    end))
+    self:AddConnection(
+        "headerDragStart",
+        scriptHeader.InputBegan:Connect(function(input)
+            if
+                input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
+                bringToFront()
+                dragging, dragStart, startPos = true, input.Position, self._win.Position
+                ensureMoveConn()
+            end
+        end)
+    )
+    self:AddConnection(
+        "resizeDragStart",
+        resizeHandle.InputBegan:Connect(function(input)
+            if
+                input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
+                resizing, resizeStartPos, resizeStartSize = true, input.Position, self._win.Size
+                ensureMoveConn()
+            end
+        end)
+    )
+    self:AddConnection(
+        "inputEnded",
+        UserInputService.InputEnded:Connect(function(input)
+            if
+                input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch
+            then
+                dragging = false
+                resizing = false
+                releaseMoveConn()
+            end
+        end)
+    )
     self:_createSearchBar()
     self._gui.Destroying:Connect(function()
         self:Cleanup()
@@ -961,14 +1183,14 @@ function Library:_createSearchBar()
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 7,
-        Name = "SearchBar"
+        Name = "SearchBar",
     })
-    new("UICorner", {Parent = searchContainer, CornerRadius = UDim.new(0, 5)})
+    new("UICorner", { Parent = searchContainer, CornerRadius = UDim.new(0, 5) })
     local searchStroke = new("UIStroke", {
         Parent = searchContainer,
         Color = colors.border,
         Thickness = 1,
-        Transparency = 0.4
+        Transparency = 0.4,
     })
     new("ImageLabel", {
         Parent = searchContainer,
@@ -977,7 +1199,7 @@ function Library:_createSearchBar()
         Position = UDim2.new(0, 6, 0.5, -7),
         BackgroundTransparency = 1,
         ImageColor3 = colors.textDimmer,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local searchBox = new("TextBox", {
         Parent = searchContainer,
@@ -993,7 +1215,7 @@ function Library:_createSearchBar()
         TextXAlignment = Enum.TextXAlignment.Left,
         ClearTextOnFocus = false,
         ClipsDescendants = true,
-        ZIndex = 9
+        ZIndex = 9,
     })
     local clearBtn = new("TextButton", {
         Parent = searchContainer,
@@ -1003,7 +1225,7 @@ function Library:_createSearchBar()
         Text = "",
         AutoButtonColor = false,
         Visible = false,
-        ZIndex = 9
+        ZIndex = 9,
     })
     local clearLines = {}
     local function addClearLine(rot)
@@ -1015,9 +1237,9 @@ function Library:_createSearchBar()
             Rotation = rot,
             BackgroundColor3 = colors.textDimmer,
             BorderSizePixel = 0,
-            ZIndex = 10
+            ZIndex = 10,
         })
-        new("UICorner", {Parent = line, CornerRadius = UDim.new(1, 0)})
+        new("UICorner", { Parent = line, CornerRadius = UDim.new(1, 0) })
         clearLines[#clearLines + 1] = line
     end
     addClearLine(45)
@@ -1038,10 +1260,10 @@ function Library:_createSearchBar()
         Visible = false,
         ClipsDescendants = true,
         ZIndex = 60,
-        Name = "SearchResults"
+        Name = "SearchResults",
     })
-    new("UICorner", {Parent = resultsPanel, CornerRadius = UDim.new(0, 5)})
-    new("UIStroke", {Parent = resultsPanel, Color = colors.border, Thickness = 1, Transparency = 0.35})
+    new("UICorner", { Parent = resultsPanel, CornerRadius = UDim.new(0, 5) })
+    new("UIStroke", { Parent = resultsPanel, Color = colors.border, Thickness = 1, Transparency = 0.35 })
     local resultsList = new("ScrollingFrame", {
         Parent = resultsPanel,
         Size = UDim2.new(1, -6, 1, -6),
@@ -1054,10 +1276,13 @@ function Library:_createSearchBar()
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ClipsDescendants = true,
-        ZIndex = 61
+        ZIndex = 61,
     })
-    new("UIListLayout", {Parent = resultsList, Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder})
-    new("UIPadding", {Parent = resultsList, PaddingRight = UDim.new(0, 1)})
+    new(
+        "UIListLayout",
+        { Parent = resultsList, Padding = UDim.new(0, ROW_GAP), SortOrder = Enum.SortOrder.LayoutOrder }
+    )
+    new("UIPadding", { Parent = resultsList, PaddingRight = UDim.new(0, 1) })
     local emptyLabel = new("TextLabel", {
         Parent = resultsPanel,
         Text = "No features found",
@@ -1070,26 +1295,32 @@ function Library:_createSearchBar()
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
         Visible = false,
-        ZIndex = 62
+        ZIndex = 62,
     })
     local rowPool = {}
     local function highlightFeature(frame)
-        if not frame or not frame.Parent then return end
+        if not frame or not frame.Parent then
+            return
+        end
         local old = frame:FindFirstChild("__SearchHL")
-        if old then old:Destroy() end
+        if old then
+            old:Destroy()
+        end
         local hl = new("UIStroke", {
             Parent = frame,
             Color = colors.primary,
             Thickness = 2,
             Transparency = 0,
-            Name = "__SearchHL"
+            Name = "__SearchHL",
         })
         task.delay(1.0, function()
             if hl and hl.Parent then
                 pcall(function()
-                    local tw = TweenService:Create(hl, TweenInfo.new(0.45), {Transparency = 1})
+                    local tw = TweenService:Create(hl, TweenInfo.new(0.45), { Transparency = 1 })
                     tw.Completed:Connect(function()
-                        if hl then hl:Destroy() end
+                        if hl then
+                            hl:Destroy()
+                        end
                     end)
                     tw:Play()
                 end)
@@ -1105,11 +1336,15 @@ function Library:_createSearchBar()
         end
         if entry.expand then
             local ok, err = pcall(entry.expand)
-            if not ok then warnLog("goToFeature:expand", err) end
+            if not ok then
+                warnLog("goToFeature:expand", err)
+            end
         end
         task.defer(function()
             local frame = entry.frame
-            if not frame or not frame.Parent then return end
+            if not frame or not frame.Parent then
+                return
+            end
             task.wait()
             local pageData = entry.pageName and self.pages[entry.pageName]
             local content = pageData and pageData.content
@@ -1130,18 +1365,18 @@ function Library:_createSearchBar()
             Text = "",
             AutoButtonColor = false,
             Visible = false,
-            ZIndex = 62
+            ZIndex = 62,
         })
-        new("UICorner", {Parent = row, CornerRadius = UDim.new(0, 4)})
+        new("UICorner", { Parent = row, CornerRadius = UDim.new(0, 4) })
         local accent = new("Frame", {
             Parent = row,
             Size = UDim2.new(0, 3, 1, -8),
             Position = UDim2.new(0, 0, 0, 4),
             BackgroundColor3 = colors.primary,
             BorderSizePixel = 0,
-            ZIndex = 63
+            ZIndex = 63,
         })
-        new("UICorner", {Parent = accent, CornerRadius = UDim.new(1, 0)})
+        new("UICorner", { Parent = accent, CornerRadius = UDim.new(1, 0) })
         local nameLabel = new("TextLabel", {
             Parent = row,
             Text = "",
@@ -1153,7 +1388,7 @@ function Library:_createSearchBar()
             TextColor3 = colors.text,
             TextXAlignment = Enum.TextXAlignment.Left,
             TextTruncate = Enum.TextTruncate.AtEnd,
-            ZIndex = 63
+            ZIndex = 63,
         })
         local metaLabel = new("TextLabel", {
             Parent = row,
@@ -1166,12 +1401,14 @@ function Library:_createSearchBar()
             TextColor3 = colors.textDimmer,
             TextXAlignment = Enum.TextXAlignment.Left,
             TextTruncate = Enum.TextTruncate.AtEnd,
-            ZIndex = 63
+            ZIndex = 63,
         })
-        local data = {button = row, nameLabel = nameLabel, metaLabel = metaLabel, entry = nil}
+        local data = { button = row, nameLabel = nameLabel, metaLabel = metaLabel, entry = nil }
         addHoverEffect(row, colors.bg4, colors.bg3)
         row.MouseButton1Click:Connect(function()
-            if data.entry then goToFeature(data.entry) end
+            if data.entry then
+                goToFeature(data.entry)
+            end
         end)
         return data
     end
@@ -1225,28 +1462,46 @@ function Library:_createSearchBar()
         resultsPanel.Visible = true
     end
     local debouncedSearch = createDebouncedSearch(0.1, doSearch)
-    self:AddConnection("searchTextChanged", searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local text = searchBox.Text
-        clearBtn.Visible = (text ~= "")
-        debouncedSearch(text)
-    end))
-    self:AddConnection("searchFocused", searchBox.Focused:Connect(function()
-        searchStroke.Color = colors.primary
-        searchStroke.Transparency = 0.1
-    end))
-    self:AddConnection("searchFocusLost", searchBox.FocusLost:Connect(function()
-        searchStroke.Color = colors.border
-        searchStroke.Transparency = 0.4
-    end))
-    self:AddConnection("searchClear", clearBtn.MouseButton1Click:Connect(function()
-        searchBox.Text = ""
-    end))
-    self:AddConnection("searchClearHoverIn", clearBtn.MouseEnter:Connect(function()
-        setClearColor(colors.primary)
-    end))
-    self:AddConnection("searchClearHoverOut", clearBtn.MouseLeave:Connect(function()
-        setClearColor(colors.textDimmer)
-    end))
+    self:AddConnection(
+        "searchTextChanged",
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local text = searchBox.Text
+            clearBtn.Visible = (text ~= "")
+            debouncedSearch(text)
+        end)
+    )
+    self:AddConnection(
+        "searchFocused",
+        searchBox.Focused:Connect(function()
+            searchStroke.Color = colors.primary
+            searchStroke.Transparency = 0.1
+        end)
+    )
+    self:AddConnection(
+        "searchFocusLost",
+        searchBox.FocusLost:Connect(function()
+            searchStroke.Color = colors.border
+            searchStroke.Transparency = 0.4
+        end)
+    )
+    self:AddConnection(
+        "searchClear",
+        clearBtn.MouseButton1Click:Connect(function()
+            searchBox.Text = ""
+        end)
+    )
+    self:AddConnection(
+        "searchClearHoverIn",
+        clearBtn.MouseEnter:Connect(function()
+            setClearColor(colors.primary)
+        end)
+    )
+    self:AddConnection(
+        "searchClearHoverOut",
+        clearBtn.MouseLeave:Connect(function()
+            setClearColor(colors.textDimmer)
+        end)
+    )
 end
 function Library:CreatePage(name, title, imageId, order)
     local page = new("Frame", {
@@ -1257,7 +1512,7 @@ function Library:CreatePage(name, title, imageId, order)
         BorderSizePixel = 0,
         Visible = false,
         ClipsDescendants = true,
-        ZIndex = 5
+        ZIndex = 5,
     })
     local contentContainer = new("ScrollingFrame", {
         Parent = page,
@@ -1269,11 +1524,19 @@ function Library:CreatePage(name, title, imageId, order)
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollingDirection = Enum.ScrollingDirection.Y,
         ClipsDescendants = true,
-        ZIndex = 5
+        ZIndex = 5,
     })
-    new("UIListLayout", {Parent = contentContainer, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder})
-    new("UIPadding", {Parent = contentContainer, PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 2), PaddingRight = UDim.new(0, 4)})
-    self.pages[name] = {frame = page, title = title, content = contentContainer}
+    new("UIListLayout", { Parent = contentContainer, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder })
+    new(
+        "UIPadding",
+        {
+            Parent = contentContainer,
+            PaddingTop = UDim.new(0, 2),
+            PaddingBottom = UDim.new(0, 2),
+            PaddingRight = UDim.new(0, 4),
+        }
+    )
+    self.pages[name] = { frame = page, title = title, content = contentContainer }
     local btn = new("TextButton", {
         Parent = self._navContainer,
         Size = UDim2.new(1, 0, 0, 28),
@@ -1283,9 +1546,9 @@ function Library:CreatePage(name, title, imageId, order)
         Text = "",
         AutoButtonColor = false,
         LayoutOrder = order or 999,
-        ZIndex = 6
+        ZIndex = 6,
     })
-    new("UICorner", {Parent = btn, CornerRadius = UDim.new(0, 5)})
+    new("UICorner", { Parent = btn, CornerRadius = UDim.new(0, 5) })
     local indicator = new("Frame", {
         Parent = btn,
         Size = UDim2.new(0, 3, 0, 16),
@@ -1293,9 +1556,9 @@ function Library:CreatePage(name, title, imageId, order)
         BackgroundColor3 = colors.primary,
         BorderSizePixel = 0,
         Visible = false,
-        ZIndex = 7
+        ZIndex = 7,
     })
-    new("UICorner", {Parent = indicator, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = indicator, CornerRadius = UDim.new(1, 0) })
     new("ImageLabel", {
         Parent = btn,
         Image = imageId or "",
@@ -1304,7 +1567,7 @@ function Library:CreatePage(name, title, imageId, order)
         BackgroundTransparency = 1,
         ImageColor3 = colors.textDim,
         ZIndex = 7,
-        Name = "Icon"
+        Name = "Icon",
     })
     new("TextLabel", {
         Parent = btn,
@@ -1317,19 +1580,24 @@ function Library:CreatePage(name, title, imageId, order)
         TextColor3 = colors.textDim,
         TextXAlignment = Enum.TextXAlignment.Left,
         ZIndex = 7,
-        Name = "Label"
+        Name = "Label",
     })
-    self._navButtons[name] = {btn = btn, indicator = indicator, page = page, title = title}
-    self:AddConnection("navBtn_" .. name, btn.MouseButton1Click:Connect(function()
-        self:_switchPage(name)
-    end))
+    self._navButtons[name] = { btn = btn, indicator = indicator, page = page, title = title }
+    self:AddConnection(
+        "navBtn_" .. name,
+        btn.MouseButton1Click:Connect(function()
+            self:_switchPage(name)
+        end)
+    )
     return contentContainer
 end
-function Library:SetFirstPage(name, title)
+function Library:SetFirstPage(name)
     self:_switchPage(name)
 end
 function Library:_switchPage(pageName)
-    if self._currentPage == pageName then return end
+    if self._currentPage == pageName then
+        return
+    end
     for _, pageData in pairs(self.pages) do
         pageData.frame.Visible = false
     end
@@ -1365,13 +1633,13 @@ function Library:CreateCategory(parent, title, startOpen)
         BackgroundTransparency = sectionTransparency,
         BorderSizePixel = 0,
         ClipsDescendants = false,
-        ZIndex = 6
+        ZIndex = 6,
     })
-    new("UICorner", {Parent = categoryFrame, CornerRadius = UDim.new(0, 4)})
-    local categoryLayout = new("UIListLayout", {
+    new("UICorner", { Parent = categoryFrame, CornerRadius = UDim.new(0, 4) })
+    new("UIListLayout", {
         Parent = categoryFrame,
         Padding = UDim.new(0, 0),
-        SortOrder = Enum.SortOrder.LayoutOrder
+        SortOrder = Enum.SortOrder.LayoutOrder,
     })
     local header = new("TextButton", {
         Parent = categoryFrame,
@@ -1380,7 +1648,7 @@ function Library:CreateCategory(parent, title, startOpen)
         BackgroundTransparency = 1,
         Text = "",
         AutoButtonColor = false,
-        ZIndex = 7
+        ZIndex = 7,
     })
     new("TextLabel", {
         Parent = header,
@@ -1392,7 +1660,7 @@ function Library:CreateCategory(parent, title, startOpen)
         TextSize = fontSize.normal,
         TextColor3 = colors.text,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local arrow = new("TextLabel", {
         Parent = header,
@@ -1403,7 +1671,7 @@ function Library:CreateCategory(parent, title, startOpen)
         Font = Enum.Font.GothamBold,
         TextSize = fontSize.small,
         TextColor3 = colors.primary,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local contentContainer = new("Frame", {
         Parent = categoryFrame,
@@ -1412,15 +1680,15 @@ function Library:CreateCategory(parent, title, startOpen)
         LayoutOrder = 2,
         BackgroundTransparency = 1,
         Visible = startOpen,
-        ZIndex = 7
+        ZIndex = 7,
     })
     new("UIPadding", {
         Parent = contentContainer,
         PaddingLeft = UDim.new(0, 10),
         PaddingRight = UDim.new(0, 10),
-        PaddingBottom = UDim.new(0, 6)
+        PaddingBottom = UDim.new(0, 6),
     })
-    new("UIListLayout", {Parent = contentContainer, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder})
+    new("UIListLayout", { Parent = contentContainer, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder })
     local isOpen = startOpen
     arrow.Rotation = startOpen and 180 or 0
 
@@ -1435,13 +1703,16 @@ function Library:CreateCategory(parent, title, startOpen)
     end)
 
     local function expand()
-        if not isOpen then setOpen(true) end
+        if not isOpen then
+            setOpen(true)
+        end
     end
 
     return contentContainer, expand
 end
 function Library:CreateToggle(parent, label, configPath, callback, disableSave, defaultValue)
-    local frame = new("Frame", {Parent = parent, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, ZIndex = 7})
+    local frame =
+        new("Frame", { Parent = parent, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, ZIndex = 7 })
     new("TextLabel", {
         Parent = frame,
         Text = label,
@@ -1451,7 +1722,7 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
         TextXAlignment = Enum.TextXAlignment.Left,
         Font = Enum.Font.GothamBold,
         TextSize = fontSize.small,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local toggleBg = new("Frame", {
         Parent = frame,
@@ -1459,19 +1730,22 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
         Position = UDim2.new(1, -34, 0.5, -9),
         BackgroundColor3 = colors.bg3,
         BorderSizePixel = 0,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = toggleBg, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = toggleBg, CornerRadius = UDim.new(1, 0) })
     local toggleCircle = new("Frame", {
         Parent = toggleBg,
         Size = UDim2.new(0, 14, 0, 14),
         Position = UDim2.new(0, 2, 0.5, -7),
         BackgroundColor3 = colors.textDim,
         BorderSizePixel = 0,
-        ZIndex = 9
+        ZIndex = 9,
     })
-    new("UICorner", {Parent = toggleCircle, CornerRadius = UDim.new(1, 0)})
-    local btn = new("TextButton", {Parent = toggleBg, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 10})
+    new("UICorner", { Parent = toggleCircle, CornerRadius = UDim.new(1, 0) })
+    local btn = new(
+        "TextButton",
+        { Parent = toggleBg, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", ZIndex = 10 }
+    )
     local on = defaultValue or false
     if configPath and not disableSave then
         on = Library.ConfigSystem.Get(configPath, on)
@@ -1482,16 +1756,21 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
         toggleCircle.BackgroundColor3 = on and colors.text or colors.textDim
     end
     updateVisual()
-    self:AddConnection("toggle_" .. label .. tostring(btn), btn.MouseButton1Click:Connect(function()
-        on = not on
-        updateVisual()
-        if configPath and not disableSave then
-            Library.ConfigSystem.Set(configPath, on)
-            MarkDirty()
-        end
-        self.flags[configPath or label] = on
-        if callback then callback(on) end
-    end))
+    self:AddConnection(
+        "toggle_" .. label .. tostring(btn),
+        btn.MouseButton1Click:Connect(function()
+            on = not on
+            updateVisual()
+            if configPath and not disableSave then
+                Library.ConfigSystem.Set(configPath, on)
+                MarkDirty()
+            end
+            self.flags[configPath or label] = on
+            if callback then
+                callback(on)
+            end
+        end)
+    )
     if configPath and not disableSave then
         RegisterCallback(configPath, callback, "toggle", defaultValue or false, function(val)
             on = val
@@ -1511,7 +1790,9 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
             end
             Library.flags[configPath or label] = on
         end,
-        get = function() return on end
+        get = function()
+            return on
+        end,
     }
     return toggleController
 end
@@ -1521,7 +1802,9 @@ Library._dropdownFolder = nil
 Library._dropdownPageLayout = nil
 Library._dropdownCount = 0
 function Library:_initDropdownSystem()
-    if self._dropdownOverlay then return end
+    if self._dropdownOverlay then
+        return
+    end
     self._dropdownOverlay = new("Frame", {
         Parent = self._win,
         Size = UDim2.new(1, 0, 1, -headerHeight),
@@ -1532,7 +1815,7 @@ function Library:_initDropdownSystem()
         ClipsDescendants = true,
         Visible = false,
         ZIndex = 150,
-        Name = "DropdownOverlay"
+        Name = "DropdownOverlay",
     })
     local closeOverlay = new("TextButton", {
         Parent = self._dropdownOverlay,
@@ -1541,7 +1824,7 @@ function Library:_initDropdownSystem()
         BackgroundTransparency = 0.999,
         BorderSizePixel = 0,
         Text = "",
-        ZIndex = 151
+        ZIndex = 151,
     })
     self._dropdownPanel = new("Frame", {
         Parent = self._dropdownOverlay,
@@ -1553,14 +1836,14 @@ function Library:_initDropdownSystem()
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 152,
-        Name = "DropdownPanel"
+        Name = "DropdownPanel",
     })
-    new("UICorner", {Parent = self._dropdownPanel, CornerRadius = UDim.new(0, 6)})
+    new("UICorner", { Parent = self._dropdownPanel, CornerRadius = UDim.new(0, 6) })
     new("UIStroke", {
         Parent = self._dropdownPanel,
         Color = colors.border,
         Thickness = 1,
-        Transparency = 0.45
+        Transparency = 0.45,
     })
     local panelInner = new("Frame", {
         Parent = self._dropdownPanel,
@@ -1571,9 +1854,9 @@ function Library:_initDropdownSystem()
         BackgroundTransparency = sectionTransparency,
         BorderSizePixel = 0,
         ZIndex = 153,
-        Name = "PanelInner"
+        Name = "PanelInner",
     })
-    new("UICorner", {Parent = panelInner, CornerRadius = UDim.new(0, 5)})
+    new("UICorner", { Parent = panelInner, CornerRadius = UDim.new(0, 5) })
     self._dropdownFolder = new("Frame", {
         Parent = panelInner,
         Size = UDim2.new(1, 0, 1, 0),
@@ -1581,7 +1864,7 @@ function Library:_initDropdownSystem()
         BorderSizePixel = 0,
         ClipsDescendants = true,
         ZIndex = 153,
-        Name = "DropdownFolder"
+        Name = "DropdownFolder",
     })
     self._dropdownPageLayout = new("UIPageLayout", {
         Parent = self._dropdownFolder,
@@ -1590,11 +1873,14 @@ function Library:_initDropdownSystem()
         TweenTime = 0.01,
         SortOrder = Enum.SortOrder.LayoutOrder,
         FillDirection = Enum.FillDirection.Vertical,
-        Name = "DropdownPageLayout"
+        Name = "DropdownPageLayout",
     })
-    self:AddConnection("dropdownOverlayClose", closeOverlay.Activated:Connect(function()
-        self:_hideDropdown()
-    end))
+    self:AddConnection(
+        "dropdownOverlayClose",
+        closeOverlay.Activated:Connect(function()
+            self:_hideDropdown()
+        end)
+    )
 end
 function Library:_showDropdown(dropdownContainer)
     self:_initDropdownSystem()
@@ -1610,29 +1896,39 @@ function Library:_hideDropdown()
         self._dropdownOverlay.Visible = false
     end
 end
-function Library:_createBaseDropdown(parent, title, imageId, items, configPath, onSelect, uniqueId, defaultValue, isMulti)
+function Library:_createBaseDropdown(
+    parent,
+    title,
+    _imageId,
+    items,
+    configPath,
+    onSelect,
+    uniqueId,
+    defaultValue,
+    isMulti
+)
     self:_initDropdownSystem()
     local dropdownLayoutOrder = self._dropdownCount
     self._dropdownCount = self._dropdownCount + 1
-    
+
     local dropdownFrame = new("Frame", {
         Parent = parent,
         Size = UDim2.new(1, 0, 0, 28),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ZIndex = 7,
-        Name = uniqueId or (isMulti and "MultiDropdown" or "Dropdown")
+        Name = uniqueId or (isMulti and "MultiDropdown" or "Dropdown"),
     })
-    
+
     local dropdownButton = new("TextButton", {
         Parent = dropdownFrame,
         Text = "",
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 1, 0),
-        ZIndex = 8
+        ZIndex = 8,
     })
-    
-    local dropdownTitle = new("TextLabel", {
+
+    new("TextLabel", {
         Parent = dropdownFrame,
         Font = Enum.Font.GothamBold,
         Text = title or (isMulti and "Multi Select" or "Dropdown"),
@@ -1642,9 +1938,9 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 0, 0, 0),
         Size = UDim2.new(0.5, 0, 1, 0),
-        ZIndex = 8
+        ZIndex = 8,
     })
-    
+
     local selectFrame = new("Frame", {
         Parent = dropdownFrame,
         AnchorPoint = Vector2.new(1, 0.5),
@@ -1653,11 +1949,11 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.new(0.48, 0, 0, 22),
         LayoutOrder = dropdownLayoutOrder,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = selectFrame, CornerRadius = UDim.new(0, 4)})
-    new("UIStroke", {Parent = selectFrame, Color = colors.border, Thickness = 1, Transparency = 0.5})
-    
+    new("UICorner", { Parent = selectFrame, CornerRadius = UDim.new(0, 4) })
+    new("UIStroke", { Parent = selectFrame, Color = colors.border, Thickness = 1, Transparency = 0.5 })
+
     local defaultText = isMulti and "Select Options" or "Select Option"
     local optionLabel = new("TextLabel", {
         Parent = selectFrame,
@@ -1671,9 +1967,9 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 8, 0.5, 0),
         Size = UDim2.new(1, -24, 1, 0),
-        ZIndex = 9
+        ZIndex = 9,
     })
-    
+
     new("ImageLabel", {
         Parent = selectFrame,
         Image = "rbxassetid://6031091004",
@@ -1682,16 +1978,16 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         BackgroundTransparency = 1,
         Position = UDim2.new(1, -6, 0.5, 0),
         Size = UDim2.new(0, 11, 0, 11),
-        ZIndex = 9
+        ZIndex = 9,
     })
-    
+
     local dropdownContainer = new("Frame", {
         Parent = self._dropdownFolder,
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
-        LayoutOrder = dropdownLayoutOrder
+        LayoutOrder = dropdownLayoutOrder,
     })
-    
+
     local searchBox = new("TextBox", {
         Parent = dropdownContainer,
         PlaceholderText = "Search...",
@@ -1706,12 +2002,12 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         Size = UDim2.new(1, -8, 0, 24),
         Position = UDim2.new(0, 4, 0, 4),
         ClearTextOnFocus = false,
-        ZIndex = 154
+        ZIndex = 154,
     })
-    new("UICorner", {Parent = searchBox, CornerRadius = UDim.new(0, 4)})
-    new("UIStroke", {Parent = searchBox, Color = colors.border, Thickness = 1, Transparency = 0.5})
-    new("UIPadding", {Parent = searchBox, PaddingLeft = UDim.new(0, 8)})
-    
+    new("UICorner", { Parent = searchBox, CornerRadius = UDim.new(0, 4) })
+    new("UIStroke", { Parent = searchBox, Color = colors.border, Thickness = 1, Transparency = 0.5 })
+    new("UIPadding", { Parent = searchBox, PaddingLeft = UDim.new(0, 8) })
+
     local scrollSelect = new("ScrollingFrame", {
         Parent = dropdownContainer,
         Size = UDim2.new(1, -8, 1, -36),
@@ -1723,63 +2019,71 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         ScrollBarThickness = 3,
         CanvasSize = UDim2.new(0, 0, 0, 0),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        ZIndex = 154
+        ZIndex = 154,
     })
-    
+
     local listLayout = new("UIListLayout", {
         Parent = scrollSelect,
         Padding = UDim.new(0, 3),
-        SortOrder = Enum.SortOrder.LayoutOrder
+        SortOrder = Enum.SortOrder.LayoutOrder,
     })
-    
-    self:AddConnection("dropdownLayout_" .. dropdownLayoutOrder, listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        scrollSelect.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 4)
-    end))
-    
+
+    self:AddConnection(
+        "dropdownLayout_" .. dropdownLayoutOrder,
+        listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            scrollSelect.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 4)
+        end)
+    )
+
     local savedValue = configPath and Library.ConfigSystem.Get(configPath, defaultValue) or defaultValue
-    if isMulti and type(savedValue) ~= "table" then savedValue = {} end
-    
+    if isMulti and type(savedValue) ~= "table" then
+        savedValue = {}
+    end
+
     local DropdownFunc = { Value = savedValue, Options = items }
     local optionFrameCache = {}
     local optionConns = {}
     local isBuilt = false
-    
+
     local function disconnectOptionConns()
         disconnectAll(optionConns)
     end
-    
+
     local function clearOptionFrames()
         disconnectOptionConns()
         local framesToDelete = {}
         for _, child in scrollSelect:GetChildren() do
-            if child:IsA("Frame") then 
+            if child:IsA("Frame") then
                 table.insert(framesToDelete, child)
             end
         end
-        
+
         if #framesToDelete > 0 then
             task.spawn(function()
                 for i, f in ipairs(framesToDelete) do
-                    pcall(function() f:Destroy() end)
+                    pcall(function()
+                        f:Destroy()
+                    end)
                     if i % 8 == 0 then
                         RunService.Heartbeat:Wait()
                     end
                 end
             end)
         end
-        
+
         table.clear(optionFrameCache)
         isBuilt = false
     end
-    
+
     local function refreshSelectionVisuals()
         local texts = {}
         for _, entry in ipairs(optionFrameCache) do
             local opt = entry.frame
             if opt and opt.Parent then
                 local v = opt:GetAttribute("RealValue")
-                local selected = isMulti and table.find(DropdownFunc.Value, v) or (not isMulti and DropdownFunc.Value == v)
-                
+                local selected = isMulti and table.find(DropdownFunc.Value, v)
+                    or (not isMulti and DropdownFunc.Value == v)
+
                 if selected then
                     opt.ChooseFrame.Size = UDim2.new(0, 3, 0, 16)
                     opt.ChooseFrame.UIStroke.Transparency = 0.35
@@ -1806,22 +2110,26 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             optionLabel.Text = (val ~= nil) and tostring(val) or defaultText
         end
     end
-    
+
     local function ensureBuilt()
-        if isBuilt then return end
+        if isBuilt then
+            return
+        end
         clearOptionFrames()
-        batchBuildOptions(DropdownFunc.Options or {}, function(opt) DropdownFunc:AddOption(opt) end)
+        batchBuildOptions(DropdownFunc.Options or {}, function(opt)
+            DropdownFunc:AddOption(opt)
+        end)
         isBuilt = true
         refreshSelectionVisuals()
     end
-    
+
     function DropdownFunc:Clear()
         clearOptionFrames()
         DropdownFunc.Value = isMulti and {} or nil
         DropdownFunc.Options = {}
         optionLabel.Text = defaultText
     end
-    
+
     function DropdownFunc:AddOption(option)
         local label, value
         if typeof(option) == "table" and option.Label and option.Value ~= nil then
@@ -1829,26 +2137,26 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
         else
             label, value = tostring(option), option
         end
-        
+
         local optionFrame = new("Frame", {
             Parent = scrollSelect,
             BackgroundColor3 = colors.bg2,
             BackgroundTransparency = 0.5,
             Size = UDim2.new(1, 0, 0, 26),
             Name = "Option",
-            ZIndex = 155
+            ZIndex = 155,
         })
-        new("UICorner", {Parent = optionFrame, CornerRadius = UDim.new(0, 3)})
-        new("UIStroke", {Parent = optionFrame, Color = colors.border, Thickness = 1, Transparency = 0.65})
-        
+        new("UICorner", { Parent = optionFrame, CornerRadius = UDim.new(0, 3) })
+        new("UIStroke", { Parent = optionFrame, Color = colors.border, Thickness = 1, Transparency = 0.65 })
+
         local optionButton = new("TextButton", {
             Parent = optionFrame,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 1, 0),
             Text = "",
-            ZIndex = 156
+            ZIndex = 156,
         })
-        
+
         new("TextLabel", {
             Parent = optionFrame,
             Font = Enum.Font.GothamBold,
@@ -1861,11 +2169,11 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             TextXAlignment = Enum.TextXAlignment.Left,
             TextTruncate = Enum.TextTruncate.AtEnd,
             Name = "OptionText",
-            ZIndex = 156
+            ZIndex = 156,
         })
-        
+
         optionFrame:SetAttribute("RealValue", value)
-        
+
         local chooseFrame = new("Frame", {
             Parent = optionFrame,
             AnchorPoint = Vector2.new(0, 0.5),
@@ -1873,11 +2181,11 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             Position = UDim2.new(0, 2, 0.5, 0),
             Size = UDim2.new(0, 0, 0, 0),
             Name = "ChooseFrame",
-            ZIndex = 156
+            ZIndex = 156,
         })
-        new("UIStroke", {Parent = chooseFrame, Color = colors.primary, Thickness = 1.6, Transparency = 0.999})
-        new("UICorner", {Parent = chooseFrame, CornerRadius = UDim.new(0, 3)})
-        
+        new("UIStroke", { Parent = chooseFrame, Color = colors.primary, Thickness = 1.6, Transparency = 0.999 })
+        new("UICorner", { Parent = chooseFrame, CornerRadius = UDim.new(0, 3) })
+
         local conn = optionButton.Activated:Connect(function()
             if isMulti then
                 if not table.find(DropdownFunc.Value, value) then
@@ -1895,13 +2203,15 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             end
             DropdownFunc:Set(DropdownFunc.Value)
         end)
-        
+
         table.insert(optionConns, conn)
-        table.insert(optionFrameCache, {frame = optionFrame, lowerLabel = string.lower(label)})
+        table.insert(optionFrameCache, { frame = optionFrame, lowerLabel = string.lower(label) })
     end
-    
+
     function DropdownFunc:Set(Value)
-        if isMulti and type(Value) ~= "table" then Value = {} end
+        if isMulti and type(Value) ~= "table" then
+            Value = {}
+        end
         DropdownFunc.Value = Value
         if configPath then
             Library.ConfigSystem.Set(configPath, Value)
@@ -1920,27 +2230,35 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             end
         end
     end
-    
-    function DropdownFunc:SetValue(val) self:Set(val) end
-    function DropdownFunc:GetValue() return self.Value end
-    
+
+    function DropdownFunc:SetValue(val)
+        self:Set(val)
+    end
+    function DropdownFunc:GetValue()
+        return self.Value
+    end
+
     function DropdownFunc:SetValues(newList, selecting)
         newList = newList or {}
         selecting = selecting or (isMulti and {} or nil)
-        if isMulti and type(selecting) ~= "table" then selecting = {} end
+        if isMulti and type(selecting) ~= "table" then
+            selecting = {}
+        end
         clearOptionFrames()
         DropdownFunc.Options = newList
         task.spawn(function()
-            batchBuildOptions(newList, function(opt) DropdownFunc:AddOption(opt) end)
+            batchBuildOptions(newList, function(opt)
+                DropdownFunc:AddOption(opt)
+            end)
             isBuilt = true
             DropdownFunc:Set(selecting)
         end)
     end
-    
+
     function DropdownFunc:Refresh(newList)
         self:SetValues(newList, isMulti and {} or nil)
     end
-    
+
     local debouncedDropdownSearch = createDebouncedSearch(0.08, function(query)
         for _, entry in ipairs(optionFrameCache) do
             if entry.frame and entry.frame.Parent then
@@ -1948,36 +2266,44 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             end
         end
     end)
-    self:AddConnection("searchBox_" .. dropdownLayoutOrder, searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        ensureBuilt()
-        debouncedDropdownSearch(string.lower(searchBox.Text))
-    end))
-    
-    self:AddConnection("dropdownOpen_" .. dropdownLayoutOrder, dropdownButton.Activated:Connect(function()
-        ensureBuilt()
-        searchBox.Text = ""
-        for _, entry in ipairs(optionFrameCache) do
-            if entry.frame and entry.frame.Parent then
-                entry.frame.Visible = true
+    self:AddConnection(
+        "searchBox_" .. dropdownLayoutOrder,
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            ensureBuilt()
+            debouncedDropdownSearch(string.lower(searchBox.Text))
+        end)
+    )
+
+    self:AddConnection(
+        "dropdownOpen_" .. dropdownLayoutOrder,
+        dropdownButton.Activated:Connect(function()
+            ensureBuilt()
+            searchBox.Text = ""
+            for _, entry in ipairs(optionFrameCache) do
+                if entry.frame and entry.frame.Parent then
+                    entry.frame.Visible = true
+                end
             end
-        end
-        self:_showDropdown(dropdownContainer)
-    end))
-    
+            self:_showDropdown(dropdownContainer)
+        end)
+    )
+
     DropdownFunc.Options = items
-    DropdownFunc.Value   = savedValue
+    DropdownFunc.Value = savedValue
     if isMulti and type(DropdownFunc.Value) ~= "table" then
         DropdownFunc.Value = {}
     end
     if (not isMulti and DropdownFunc.Value ~= nil) or (isMulti and #DropdownFunc.Value > 0) then
         setLabelFromValue(DropdownFunc.Value)
     end
-    
+
     if configPath then
         local cbType = isMulti and "multidropdown" or "dropdown"
         local cbDef = isMulti and (defaultValue or {}) or defaultValue
         RegisterCallback(configPath, onSelect, cbType, cbDef, function(val)
-            if isMulti and type(val) ~= "table" then val = {} end
+            if isMulti and type(val) ~= "table" then
+                val = {}
+            end
             DropdownFunc.Value = val
             if isBuilt then
                 refreshSelectionVisuals()
@@ -1986,11 +2312,11 @@ function Library:_createBaseDropdown(parent, title, imageId, items, configPath, 
             end
         end)
     end
-    
+
     if uniqueId then
         self.flags[uniqueId] = DropdownFunc
     end
-    
+
     return dropdownFrame
 end
 
@@ -2002,8 +2328,9 @@ function Library:CreateMultiDropdown(parent, title, imageId, items, configPath, 
     return self:_createBaseDropdown(parent, title, imageId, items, configPath, onSelect, uniqueId, defaultValues, true)
 end
 
-function Library:CreateInput(parent, label, configPath, defaultValue, callback)
-    local frame = new("Frame", {Parent = parent, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, ZIndex = 7})
+function Library:CreateInput(parent, label, configPath, defaultValue, callback, placeholder)
+    local frame =
+        new("Frame", { Parent = parent, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, ZIndex = 7 })
     new("TextLabel", {
         Parent = frame,
         Text = label,
@@ -2013,7 +2340,7 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         TextXAlignment = Enum.TextXAlignment.Left,
         Font = Enum.Font.GothamBold,
         TextSize = fontSize.small,
-        ZIndex = 8
+        ZIndex = 8,
     })
     local inputBg = new("Frame", {
         Parent = frame,
@@ -2023,9 +2350,9 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         BackgroundTransparency = panelTransparency,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = inputBg, CornerRadius = UDim.new(0, 4)})
+    new("UICorner", { Parent = inputBg, CornerRadius = UDim.new(0, 4) })
     local initialValue = Library.ConfigSystem.Get(configPath, defaultValue)
     local inputBox = new("TextBox", {
         Parent = inputBg,
@@ -2033,7 +2360,7 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         Position = UDim2.new(0, 8, 0, 0),
         BackgroundTransparency = 1,
         Text = initialValue ~= nil and tostring(initialValue) or "",
-        PlaceholderText = "Enter Value",
+        PlaceholderText = (placeholder and placeholder ~= "") and placeholder or "Enter Value",
         Font = Enum.Font.GothamBold,
         TextSize = fontSize.small,
         TextColor3 = colors.text,
@@ -2041,7 +2368,7 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         TextXAlignment = Enum.TextXAlignment.Left,
         ClipsDescendants = true,
         ClearTextOnFocus = false,
-        ZIndex = 9
+        ZIndex = 9,
     })
     local function resolveValue(text)
         text = sanitizeInput(text, MAX_INPUT_LENGTH)
@@ -2050,21 +2377,30 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback)
         end
         local num = tonumber(text)
         if num then
-            if num ~= num then return 0 end
-            if num == math.huge or num == -math.huge then return 0 end
+            if num ~= num then
+                return 0
+            end
+            if num == math.huge or num == -math.huge then
+                return 0
+            end
         end
         return num or text
     end
-    self:AddConnection("input_" .. label .. tostring(inputBox), inputBox.FocusLost:Connect(function()
-        local rawValue = sanitizeInput(inputBox.Text, MAX_INPUT_LENGTH)
-        inputBox.Text = rawValue
-        local value = resolveValue(rawValue)
-        if configPath then
-            Library.ConfigSystem.Set(configPath, value)
-            MarkDirty()
-        end
-        if callback then safecall(callback, value) end
-    end))
+    self:AddConnection(
+        "input_" .. label .. tostring(inputBox),
+        inputBox.FocusLost:Connect(function()
+            local rawValue = sanitizeInput(inputBox.Text, MAX_INPUT_LENGTH)
+            inputBox.Text = rawValue
+            local value = resolveValue(rawValue)
+            if configPath then
+                Library.ConfigSystem.Set(configPath, value)
+                MarkDirty()
+            end
+            if callback then
+                safecall(callback, value)
+            end
+        end)
+    )
     RegisterCallback(configPath, callback, "input", defaultValue, function(val)
         inputBox.Text = tostring(val ~= nil and val or defaultValue or "")
     end)
@@ -2080,9 +2416,9 @@ function Library:CreateButton(parent, label, callback)
         BackgroundColor3 = colors.primary,
         BackgroundTransparency = panelTransparency,
         BorderSizePixel = 0,
-        ZIndex = 8
+        ZIndex = 8,
     })
-    new("UICorner", {Parent = btnFrame, CornerRadius = UDim.new(0, 5)})
+    new("UICorner", { Parent = btnFrame, CornerRadius = UDim.new(0, 5) })
     local button = new("TextButton", {
         Parent = btnFrame,
         Size = UDim2.new(1, 0, 1, 0),
@@ -2092,83 +2428,118 @@ function Library:CreateButton(parent, label, callback)
         TextSize = fontSize.normal,
         TextColor3 = colors.text,
         AutoButtonColor = false,
-        ZIndex = 9
+        ZIndex = 9,
     })
-    
+
     local isClicking = false
     local darkerColor = Color3.new(colors.primary.R * 0.7, colors.primary.G * 0.7, colors.primary.B * 0.7)
-    
-    self:AddConnection("btn_" .. label .. tostring(button), button.MouseButton1Down:Connect(function()
-        if isClicking then return end
-        btnFrame.BackgroundColor3 = darkerColor
-        btnFrame.BackgroundTransparency = 0
-    end))
 
-    self:AddConnection("btn_up_" .. label .. tostring(button), button.MouseButton1Up:Connect(function()
-        btnFrame.BackgroundColor3 = colors.primary
-        btnFrame.BackgroundTransparency = panelTransparency
-    end))
-
-    self:AddConnection("btn_leave_" .. label .. tostring(button), button.MouseLeave:Connect(function()
-        btnFrame.BackgroundColor3 = colors.primary
-        btnFrame.BackgroundTransparency = panelTransparency
-    end))
-
-    self:AddConnection("btn_click_" .. label .. tostring(button), button.MouseButton1Click:Connect(function()
-        if isClicking then return end
-        isClicking = true
-        if callback then
-            task.spawn(function()
-                local ok, err = pcall(callback)
-                if not ok then warnLog("CreateButton:Callback:" .. tostring(label), err) end
-            end)
-        end
-        task.delay(0.1, function()
-            isClicking = false
+    self:AddConnection(
+        "btn_" .. label .. tostring(button),
+        button.MouseButton1Down:Connect(function()
+            if isClicking then
+                return
+            end
+            btnFrame.BackgroundColor3 = darkerColor
+            btnFrame.BackgroundTransparency = 0
         end)
-    end))
-    
+    )
+
+    self:AddConnection(
+        "btn_up_" .. label .. tostring(button),
+        button.MouseButton1Up:Connect(function()
+            btnFrame.BackgroundColor3 = colors.primary
+            btnFrame.BackgroundTransparency = panelTransparency
+        end)
+    )
+
+    self:AddConnection(
+        "btn_leave_" .. label .. tostring(button),
+        button.MouseLeave:Connect(function()
+            btnFrame.BackgroundColor3 = colors.primary
+            btnFrame.BackgroundTransparency = panelTransparency
+        end)
+    )
+
+    self:AddConnection(
+        "btn_click_" .. label .. tostring(button),
+        button.MouseButton1Click:Connect(function()
+            if isClicking then
+                return
+            end
+            isClicking = true
+            if callback then
+                task.spawn(function()
+                    local ok, err = pcall(callback)
+                    if not ok then
+                        warnLog("CreateButton:Callback:" .. tostring(label), err)
+                    end
+                end)
+            end
+            task.delay(0.1, function()
+                isClicking = false
+            end)
+        end)
+    )
+
     return btnFrame
 end
 
 function Library:Initialize()
-    if self._initialized then return end
+    if self._initialized then
+        return
+    end
     self._initialized = true
     ExecuteConfigCallbacks()
     if self._pendingWindowObj then
         local ok, err = pcall(function()
             self:_createConfigTab(self._pendingWindowObj)
         end)
-        if not ok then warnLog("Initialize:CreateConfigTab", err) end
+        if not ok then
+            warnLog("Initialize:CreateConfigTab", err)
+        end
         self._pendingWindowObj = nil
     end
-    self:AddConnection("playerRemoving", Players.PlayerRemoving:Connect(function(plr)
-        if plr == localPlayer then
-            if Library._saveThread then
-                pcall(function() task.cancel(Library._saveThread) end)
-                Library._saveThread = nil
+    self:AddConnection(
+        "playerRemoving",
+        Players.PlayerRemoving:Connect(function(plr)
+            if plr == localPlayer then
+                if Library._saveThread then
+                    pcall(function()
+                        task.cancel(Library._saveThread)
+                    end)
+                    Library._saveThread = nil
+                end
+                local ok, err = pcall(function()
+                    Library.ConfigSystem.Save()
+                end)
+                if not ok then
+                    warnLog("playerRemoving:Save", err)
+                end
+                isDirty = false
             end
-            local ok, err = pcall(function() Library.ConfigSystem.Save() end)
-            if not ok then warnLog("playerRemoving:Save", err) end
-            isDirty = false
-        end
-    end))
+        end)
+    )
 end
 
 function Library:MakeNotify(config)
     config = config or {}
-    local title   = config.Title or "Notification"
-    local desc    = config.Description or ""
+    local title = config.Title or "Notification"
+    local desc = config.Description or ""
     local content = config.Content or ""
-    local color   = config.Color or colors.primary
-    local delay   = config.Delay or 3
-    if not self._gui then return end
+    local color = config.Color or colors.primary
+    local delay = config.Delay or 3
+    if not self._gui then
+        return
+    end
     self._activeNotifs = self._activeNotifs or {}
     for i = #self._activeNotifs, 1, -1 do
         local old = self._activeNotifs[i]
         table.remove(self._activeNotifs, i)
         pcall(function()
-            if old and old.Parent then old:Destroy() end
+            if old and old.Parent then
+                old:Destroy()
+            end
         end)
     end
     local notif = new("Frame", {
@@ -2178,19 +2549,19 @@ function Library:MakeNotify(config)
         BackgroundColor3 = colors.bg2,
         BackgroundTransparency = panelTransparency,
         BorderSizePixel = 0,
-        ZIndex = 200
+        ZIndex = 200,
     })
     table.insert(self._activeNotifs, notif)
-    new("UICorner", {Parent = notif, CornerRadius = UDim.new(0, 6)})
+    new("UICorner", { Parent = notif, CornerRadius = UDim.new(0, 6) })
     local accent = new("Frame", {
         Parent = notif,
         Size = UDim2.new(0, 3, 1, -8),
         Position = UDim2.new(0, 4, 0, 4),
         BackgroundColor3 = color,
         BorderSizePixel = 0,
-        ZIndex = 201
+        ZIndex = 201,
     })
-    new("UICorner", {Parent = accent, CornerRadius = UDim.new(1, 0)})
+    new("UICorner", { Parent = accent, CornerRadius = UDim.new(1, 0) })
     new("TextLabel", {
         Parent = notif,
         Text = title,
@@ -2201,7 +2572,7 @@ function Library:MakeNotify(config)
         TextSize = fontSize.normal,
         TextColor3 = color,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 201
+        ZIndex = 201,
     })
     new("TextLabel", {
         Parent = notif,
@@ -2213,7 +2584,7 @@ function Library:MakeNotify(config)
         TextSize = fontSize.small,
         TextColor3 = colors.text,
         TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 201
+        ZIndex = 201,
     })
     new("TextLabel", {
         Parent = notif,
@@ -2226,7 +2597,7 @@ function Library:MakeNotify(config)
         TextColor3 = colors.textDim,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextWrapped = true,
-        ZIndex = 201
+        ZIndex = 201,
     })
     task.delay(delay, function()
         pcall(function()
@@ -2236,7 +2607,9 @@ function Library:MakeNotify(config)
         end)
     end)
     notif.Destroying:Connect(function()
-        if not self._activeNotifs then return end
+        if not self._activeNotifs then
+            return
+        end
         for i = #self._activeNotifs, 1, -1 do
             if self._activeNotifs[i] == notif then
                 table.remove(self._activeNotifs, i)
@@ -2249,46 +2622,46 @@ function Library:_createConfigTab(WindowObject)
     local configTab = WindowObject:AddTab({ Name = "Config", Icon = "loop" })
     local autoSaveSection = configTab:AddSection("Auto Save")
     autoSaveSection:AddToggle({
-        Title    = "Auto Save Config",
-        Default  = true,
-        NoSave   = true,
+        Title = "Auto Save Config",
+        Default = true,
+        NoSave = true,
         Callback = function(val)
             _autoSaveEnabled = val
             _G.LynxGUI.AutoSaveEnabled = val
             self:MakeNotify({
-                Title       = "Auto Save",
+                Title = "Auto Save",
                 Description = val and "Auto Save diaktifkan" or "Auto Save dinonaktifkan",
-                Delay       = 2,
+                Delay = 2,
             })
         end,
     })
 
     local mgmtSection = configTab:AddSection("Config Management")
     mgmtSection:AddButton({
-        Title    = "Save Config Now",
+        Title = "Save Config Now",
         Callback = function()
             local ok, err = Library.ConfigSystem.Save()
             self:MakeNotify({
-                Title       = "Config",
+                Title = "Config",
                 Description = ok and "Config berhasil disimpan!" or ("Gagal menyimpan config: " .. tostring(err)),
-                Color       = ok and colors.success or Color3.fromRGB(220, 50, 50),
-                Delay       = ok and 2 or 4,
+                Color = ok and colors.success or Color3.fromRGB(220, 50, 50),
+                Delay = ok and 2 or 4,
             })
         end,
     })
 
     mgmtSection:AddButton({
-        Title    = "Restore Backup",
+        Title = "Restore Backup",
         Callback = function()
             local ok, err = Library.ConfigSystem.RestoreBackup()
             if ok then
                 ExecuteConfigCallbacks()
             end
             self:MakeNotify({
-                Title       = "Config",
+                Title = "Config",
                 Description = ok and "Backup berhasil dipulihkan!" or ("Gagal restore backup: " .. tostring(err)),
-                Color       = ok and colors.success or Color3.fromRGB(220, 50, 50),
-                Delay       = ok and 2 or 4,
+                Color = ok and colors.success or Color3.fromRGB(220, 50, 50),
+                Delay = ok and 2 or 4,
             })
         end,
     })
@@ -2297,25 +2670,25 @@ function Library:_createConfigTab(WindowObject)
         Library.ConfigSystem.Reset()
         ExecuteConfigCallbacks()
         self:MakeNotify({
-            Title       = "Config",
+            Title = "Config",
             Description = "Semua settingan direset ke default!",
-            Color       = Color3.fromRGB(220, 50, 50),
-            Delay       = 3,
+            Color = Color3.fromRGB(220, 50, 50),
+            Delay = 3,
         })
     end)
     mgmtSection:AddParagraph({
-        Title   = "⚠️ Perhatian",
+        Title = "⚠️ Perhatian",
         Content = "Setelah melakukan Reset to Default, beberapa settingan seperti Toggle dan nilai Input akan langsung ter-update di UI.\n\n"
-               .. "Namun untuk settingan yang mempengaruhi karakter, kecepatan, atau fitur aktif lainnya — kamu perlu Rejoin / Respawn agar perubahan berlaku sepenuhnya.\n\n"
-               .. "File config disimpan otomatis setiap 2 detik jika Auto Save aktif. Pastikan Auto Save ON sebelum keluar game agar settinganmu tidak hilang.",
+            .. "Namun untuk settingan yang mempengaruhi karakter, kecepatan, atau fitur aktif lainnya — kamu perlu Rejoin / Respawn agar perubahan berlaku sepenuhnya.\n\n"
+            .. "File config disimpan otomatis setiap 2 detik jika Auto Save aktif. Pastikan Auto Save ON sebelum keluar game agar settinganmu tidak hilang.",
     })
     makeConfirmButton(mgmtSection, "Delete Config File", Color3.fromRGB(200, 30, 30), function()
         Library.ConfigSystem.Delete()
         self:MakeNotify({
-            Title       = "Config",
+            Title = "Config",
             Description = "File config telah dihapus.",
-            Color       = Color3.fromRGB(220, 50, 50),
-            Delay       = 2,
+            Color = Color3.fromRGB(220, 50, 50),
+            Delay = 2,
         })
     end)
 end
@@ -2323,14 +2696,14 @@ end
 function Library:Window(config)
     config = config or {}
     self:CreateWindow({
-        Name     = "LynxGui",
-        Title    = config.Title or "LynX",
-        Subtitle = config.Footer or ""
+        Name = "LynxGui",
+        Title = config.Title or "LynX",
+        Subtitle = config.Footer or "",
     })
     Library.ConfigSystem.Load()
     local WindowObject = {}
     WindowObject._library = self
-    WindowObject._tabs    = {}
+    WindowObject._tabs = {}
     WindowObject._tabOrder = 0
     Library._initialized = false
     Library._pendingWindowObj = WindowObject
@@ -2343,63 +2716,27 @@ function Library:Window(config)
         tabConfig = tabConfig or {}
         local tabName = tabConfig.Name or "Tab"
         local tabIcon = tabConfig.Icon or ""
-        local iconMap = {
-            ["player"]    = "rbxassetid://12120698352",
-            ["web"]       = "rbxassetid://137601480983962",
-            ["bag"]       = "rbxassetid://8601111810",
-            ["shop"]      = "rbxassetid://4985385964",
-            ["cart"]      = "rbxassetid://128874923961846",
-            ["plug"]      = "rbxassetid://137601480983962",
-            ["settings"]  = "rbxassetid://70386228443175",
-            ["loop"]      = "rbxassetid://122032243989747",
-            ["gps"]       = "rbxassetid://78381660144034",
-            ["compas"]    = "rbxassetid://125300760963399",
-            ["gamepad"]   = "rbxassetid://84173963561612",
-            ["boss"]      = "rbxassetid://13132186360",
-            ["scroll"]    = "rbxassetid://114127804740858",
-            ["menu"]      = "rbxassetid://6340513838",
-            ["crosshair"] = "rbxassetid://12614416478",
-            ["user"]      = "rbxassetid://108483430622128",
-            ["stat"]      = "rbxassetid://12094445329",
-            ["eyes"]      = "rbxassetid://14321059114",
-            ["sword"]     = "rbxassetid://82472368671405",
-            ["discord"]   = "rbxassetid://94434236999817",
-            ["star"]      = "rbxassetid://107005941750079",
-            ["skeleton"]  = "rbxassetid://17313330026",
-            ["payment"]   = "rbxassetid://18747025078",
-            ["scan"]      = "rbxassetid://109869955247116",
-            ["alert"]     = "rbxassetid://73186275216515",
-            ["question"]  = "rbxassetid://17510196486",
-            ["idea"]      = "rbxassetid://16833255748",
-            ["strom"]     = "rbxassetid://13321880293",
-            ["water"]     = "rbxassetid://100076212630732",
-            ["dcs"]       = "rbxassetid://15310731934",
-            ["start"]     = "rbxassetid://108886429866687",
-            ["next"]      = "rbxassetid://12662718374",
-            ["rod"]       = "rbxassetid://103247953194129",
-            ["fish"]      = "rbxassetid://97167558235554",
-            ["send"]      = "rbxassetid://122775063389583",
-            ["home"]      = "rbxassetid://86450224791749",
-        }
         local iconId = ""
         if tabIcon and tabIcon ~= "" then
-            iconId = iconMap[tabIcon:lower()] or ""
+            iconId = TAB_ICONS[tabIcon:lower()] or ""
         end
         self._tabOrder = (self._tabOrder or 0) + 1
         local page = self._library:CreatePage(tabName, tabName, iconId, self._tabOrder)
         local TabObject = {}
-        TabObject._page      = page
-        TabObject._library   = self._library
-        TabObject._sections  = {}
+        TabObject._page = page
+        TabObject._library = self._library
+        TabObject._sections = {}
         function TabObject:AddSection(sectionTitle, isOpen)
             sectionTitle = sectionTitle or "Section"
             local category, sectionExpand = self._library:CreateCategory(self._page, sectionTitle, isOpen)
             local SectionObject = {}
-            SectionObject._container  = category
-            SectionObject._library    = self._library
+            SectionObject._container = category
+            SectionObject._library = self._library
             SectionObject._layoutOrder = 0
             local function registerFeature(featureName, featureFrame, featureKind)
-                if not featureName or not featureFrame then return end
+                if not featureName or not featureFrame then
+                    return
+                end
                 local lib = self._library
                 lib._searchIndex = lib._searchIndex or {}
                 table.insert(lib._searchIndex, {
@@ -2418,26 +2755,33 @@ function Library:Window(config)
             end
             function SectionObject:AddToggle(toggleConfig)
                 toggleConfig = toggleConfig or {}
-                local title      = toggleConfig.Title or "Toggle"
-                local default    = toggleConfig.Default or false
-                local callback   = toggleConfig.Callback
-                local noSave     = toggleConfig.NoSave or false
+                local title = toggleConfig.Title or "Toggle"
+                local default = toggleConfig.Default or false
+                local callback = toggleConfig.Callback
+                local noSave = toggleConfig.NoSave or false
                 local configPath = noSave and nil or ("Toggles." .. title:gsub("%s+", "_"))
                 local toggleObj = { _value = default }
                 local wrappedCallback = function(val)
                     toggleObj._value = val
-                    if callback then callback(val) end
+                    if callback then
+                        callback(val)
+                    end
                 end
-                local toggleResult = self._library:CreateToggle(self._container, title, configPath, wrappedCallback, noSave, default)
+                local toggleResult =
+                    self._library:CreateToggle(self._container, title, configPath, wrappedCallback, noSave, default)
                 local frame = toggleResult and toggleResult.frame or toggleResult
-                if frame then frame.LayoutOrder = getNextLayoutOrder() end
+                if frame then
+                    frame.LayoutOrder = getNextLayoutOrder()
+                end
                 registerFeature(title, frame, "Toggle")
                 function toggleObj:SetValue(val)
                     self._value = val
                     if toggleResult and toggleResult.set then
                         toggleResult.set(val)
                     end
-                    if callback then callback(val) end
+                    if callback then
+                        callback(val)
+                    end
                 end
                 function toggleObj:GetValue()
                     return self._value
@@ -2446,17 +2790,28 @@ function Library:Window(config)
             end
             function SectionObject:AddDropdown(dropdownConfig)
                 dropdownConfig = dropdownConfig or {}
-                local title      = dropdownConfig.Title or "Dropdown"
-                local options    = dropdownConfig.Options or {}
-                local default    = dropdownConfig.Default
-                local callback   = dropdownConfig.Callback
-                local noSave     = dropdownConfig.NoSave or false
-                local isMulti    = dropdownConfig.Multi or false
-                local configPath = noSave and nil or ((isMulti and "MultiDropdowns." or "Dropdowns.") .. title:gsub("%s+", "_"))
-                local uniqueId   = title:gsub("%s+", "_")
+                local title = dropdownConfig.Title or "Dropdown"
+                local options = dropdownConfig.Options or {}
+                local default = dropdownConfig.Default
+                local callback = dropdownConfig.Callback
+                local noSave = dropdownConfig.NoSave or false
+                local isMulti = dropdownConfig.Multi or false
+                local configPath = noSave and nil
+                    or ((isMulti and "MultiDropdowns." or "Dropdowns.") .. title:gsub("%s+", "_"))
+                local uniqueId = title:gsub("%s+", "_")
                 if isMulti then
-                    local frame = self._library:CreateMultiDropdown(self._container, title, nil, options, configPath, callback, uniqueId)
-                    if frame then frame.LayoutOrder = getNextLayoutOrder() end
+                    local frame = self._library:CreateMultiDropdown(
+                        self._container,
+                        title,
+                        nil,
+                        options,
+                        configPath,
+                        callback,
+                        uniqueId
+                    )
+                    if frame then
+                        frame.LayoutOrder = getNextLayoutOrder()
+                    end
                     registerFeature(title, frame, "Dropdown")
                     return createDropdownController(uniqueId, options)
                 end
@@ -2466,44 +2821,62 @@ function Library:Window(config)
                         Library.ConfigSystem.Set(configPath, default)
                     end
                 end
-                local frame = self._library:CreateDropdown(self._container, title, nil, options, configPath, callback, uniqueId, default)
-                if frame then frame.LayoutOrder = getNextLayoutOrder() end
+                local frame = self._library:CreateDropdown(
+                    self._container,
+                    title,
+                    nil,
+                    options,
+                    configPath,
+                    callback,
+                    uniqueId,
+                    default
+                )
+                if frame then
+                    frame.LayoutOrder = getNextLayoutOrder()
+                end
                 registerFeature(title, frame, "Dropdown")
                 return createDropdownController(uniqueId, options)
             end
             function SectionObject:AddInput(inputConfig)
                 inputConfig = inputConfig or {}
-                local title       = inputConfig.Title or "Input"
-                local default     = inputConfig.Default or ""
+                local title = inputConfig.Title or "Input"
+                local default = inputConfig.Default or ""
                 local placeholder = inputConfig.Placeholder or ""
-                local callback    = inputConfig.Callback
-                local noSave      = inputConfig.NoSave or false
-                local configPath  = noSave and nil or ("Inputs." .. title:gsub("%s+", "_"))
-                
-                local frame = self._library:CreateInput(self._container, title, configPath, default, callback)
-                if frame then frame.LayoutOrder = getNextLayoutOrder() end
+                local callback = inputConfig.Callback
+                local noSave = inputConfig.NoSave or false
+                local configPath = noSave and nil or ("Inputs." .. title:gsub("%s+", "_"))
+
+                local frame =
+                    self._library:CreateInput(self._container, title, configPath, default, callback, placeholder)
+                if frame then
+                    frame.LayoutOrder = getNextLayoutOrder()
+                end
                 registerFeature(title, frame, "Input")
                 return {
-                    SetValue = function(self, val) end
+                    SetValue = function() end,
                 }
             end
             function SectionObject:AddButton(buttonConfig)
                 buttonConfig = buttonConfig or {}
-                local title    = buttonConfig.Title or "Button"
+                local title = buttonConfig.Title or "Button"
                 local callback = buttonConfig.Callback or function() end
                 local frame = self._library:CreateButton(self._container, title, callback)
-                if frame then frame.LayoutOrder = getNextLayoutOrder() end
+                if frame then
+                    frame.LayoutOrder = getNextLayoutOrder()
+                end
                 registerFeature(title, frame, "Button")
                 return frame
             end
             function SectionObject:AddParagraph(paragraphConfig)
                 paragraphConfig = paragraphConfig or {}
                 local useRich = paragraphConfig.RichText == true
-                local title   = useRich and formatRichText(paragraphConfig.Title or "") or stripRichTags(paragraphConfig.Title or "")
-                local content = useRich and formatRichText(paragraphConfig.Content or "") or stripRichTags(paragraphConfig.Content or "")
+                local title = useRich and formatRichText(paragraphConfig.Title or "")
+                    or stripRichTags(paragraphConfig.Title or "")
+                local content = useRich and formatRichText(paragraphConfig.Content or "")
+                    or stripRichTags(paragraphConfig.Content or "")
 
                 local PADDING_V = 20
-                local GAP       = 6
+                local GAP = 6
 
                 local frame = new("Frame", {
                     Parent = self._container,
@@ -2511,21 +2884,21 @@ function Library:Window(config)
                     BackgroundColor3 = colors.bg2,
                     BackgroundTransparency = 0.5,
                     ZIndex = 7,
-                    LayoutOrder = getNextLayoutOrder()
+                    LayoutOrder = getNextLayoutOrder(),
                 })
-                new("UICorner", {Parent = frame, CornerRadius = UDim.new(0, 5)})
-                new("UIStroke", {Parent = frame, Color = colors.border, Thickness = 1, Transparency = 0.65})
+                new("UICorner", { Parent = frame, CornerRadius = UDim.new(0, 5) })
+                new("UIStroke", { Parent = frame, Color = colors.border, Thickness = 1, Transparency = 0.65 })
                 new("UIPadding", {
                     Parent = frame,
-                    PaddingTop    = UDim.new(0, 10),
+                    PaddingTop = UDim.new(0, 10),
                     PaddingBottom = UDim.new(0, 10),
-                    PaddingLeft   = UDim.new(0, 12),
-                    PaddingRight  = UDim.new(0, 12)
+                    PaddingLeft = UDim.new(0, 12),
+                    PaddingRight = UDim.new(0, 12),
                 })
                 new("UIListLayout", {
                     Parent = frame,
                     Padding = UDim.new(0, GAP),
-                    SortOrder = Enum.SortOrder.LayoutOrder
+                    SortOrder = Enum.SortOrder.LayoutOrder,
                 })
 
                 local titleLabel
@@ -2544,7 +2917,7 @@ function Library:Window(config)
                         TextYAlignment = Enum.TextYAlignment.Top,
                         TextWrapped = true,
                         RichText = useRich,
-                        ZIndex = 8
+                        ZIndex = 8,
                     })
                 end
 
@@ -2562,16 +2935,20 @@ function Library:Window(config)
                     TextYAlignment = Enum.TextYAlignment.Top,
                     TextWrapped = true,
                     RichText = useRich,
-                    ZIndex = 8
+                    ZIndex = 8,
                 })
 
                 local reflowPending = false
                 local function reflow()
-                    if reflowPending then return end
+                    if reflowPending then
+                        return
+                    end
                     reflowPending = true
                     task.defer(function()
                         reflowPending = false
-                        if not frame or not frame.Parent then return end
+                        if not frame or not frame.Parent then
+                            return
+                        end
                         local total = PADDING_V
                         if titleLabel and titleLabel.Parent then
                             local h = math.max(titleLabel.TextBounds.Y, 14)
@@ -2597,8 +2974,8 @@ function Library:Window(config)
                 task.defer(reflow)
 
                 return {
-                    _frame        = frame,
-                    _titleLabel   = titleLabel,
+                    _frame = frame,
+                    _titleLabel = titleLabel,
                     _contentLabel = contentLabel,
                     SetTitle = function(self, newTitle)
                         if self._titleLabel then
@@ -2616,7 +2993,7 @@ function Library:Window(config)
                     end,
                     GetContent = function(self)
                         return self._contentLabel and self._contentLabel.Text or ""
-                    end
+                    end,
                 }
             end
             table.insert(self._sections, SectionObject)
